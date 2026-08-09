@@ -218,6 +218,103 @@ def pg_restore_list(dump_dir: str | Path) -> list[str]:
     return proc.stdout.split("\n")
 
 
+def transfer_relation(
+    cfg: Config,
+    source_db: str,
+    target_db: str,
+    relation: str,
+    *,
+    target_schema: str,
+) -> int:
+    """Stream one relation from one database into a schema of another.
+
+    ``ALTER TABLE ... SET SCHEMA`` cannot cross a database boundary, so a
+    candidate built in a separate database has to be carried into the serving
+    database before it can be swapped into place. This pipes pg_dump straight
+    into psql: no intermediate file, so peak disk cost is the target copy only.
+
+    The bytes that were structurally verified in the candidate database are the
+    same bytes that end up serving. Nothing is rebuilt in transit.
+
+    Returns the exit status of the pipeline's read end for logging.
+    """
+    schema, _, table = relation.rpartition(".")
+    schema = schema or "public"
+
+    psql(
+        cfg,
+        target_db,
+        f"CREATE SCHEMA IF NOT EXISTS {quote_ident(target_schema)}",
+        tuples_only=False,
+    )
+
+    dump = [
+        "pg_dump",
+        "-h",
+        cfg.db_host,
+        "-p",
+        str(cfg.db_port),
+        "-U",
+        cfg.db_superuser,
+        "-d",
+        source_db,
+        "--table",
+        f"{schema}.{table}",
+        "--no-owner",
+        "--no-privileges",
+        "--no-comments",
+    ]
+    # Rewrite the qualified name on the way through so the incoming copy lands
+    # beside the relation it will replace rather than colliding with it.
+    load = [
+        "psql",
+        *_base_args(cfg, target_db),
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-q",
+        "-c",
+        f"SET search_path TO {quote_ident(target_schema)}",
+        "-f",
+        "-",
+    ]
+
+    producer = subprocess.Popen(dump, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert producer.stdout is not None
+    consumer = subprocess.Popen(
+        load, stdin=producer.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    producer.stdout.close()
+    _, load_err = consumer.communicate()
+    producer.wait()
+    _, dump_err = producer.communicate()
+
+    if producer.returncode != 0:
+        raise DatabaseError(
+            f"pg_dump of {relation} from {source_db} failed: "
+            f"{dump_err.decode(errors='replace').strip()}"
+        )
+    if consumer.returncode != 0:
+        raise DatabaseError(
+            f"loading {relation} into {target_db}.{target_schema} failed: "
+            f"{load_err.decode(errors='replace').strip()}"
+        )
+    return consumer.returncode
+
+
+def relation_kind(cfg: Config, dbname: str, relation: str) -> str | None:
+    """Return the pg_class relkind of a qualified relation, or None if absent."""
+    schema, _, table = relation.rpartition(".")
+    schema = schema or "public"
+    return scalar(
+        cfg,
+        dbname,
+        "SELECT c.relkind FROM pg_class c "
+        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+        f"WHERE n.nspname = {quote_literal(schema)} "
+        f"AND c.relname = {quote_literal(table)}",
+    )
+
+
 def apply_session_tuning(cfg: Config, dbname: str) -> None:
     """Apply restore-oriented settings for the current database."""
     mwm = cfg.get("restore.maintenance_work_mem", "2GB")

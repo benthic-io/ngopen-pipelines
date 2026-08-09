@@ -110,6 +110,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", dest="as_json", action="store_true", help="Emit JSON, not markdown."
     )
 
+    migrate = sub.add_parser(
+        "migrate",
+        help="Move a dataset onto pipeline-built relations, one relation at a time.",
+    )
+    migrate.add_argument("dataset", choices=DATASETS)
+    migrate.add_argument(
+        "--candidate", help="Database holding the pipeline-built relations."
+    )
+    migrate.add_argument(
+        "--serving",
+        help="Serving database. Default: the dataset's configured database.",
+    )
+    migrate.add_argument(
+        "--plan", action="store_true", help="Show the state of every relation."
+    )
+    migrate.add_argument(
+        "--relation",
+        action="append",
+        help="Migrate this relation (repeatable). Runs build, verify, then swap.",
+    )
+    migrate.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Stage and compare, but do not cut over.",
+    )
+    migrate.add_argument(
+        "--force",
+        action="store_true",
+        help="Swap even if structural comparison failed.",
+    )
+    migrate.add_argument("--rollback", help="Return this relation to its legacy copy.")
+    migrate.add_argument(
+        "--reclaim",
+        action="store_true",
+        help="Drop retained legacy relations. Irreversible.",
+    )
+    migrate.add_argument("--out", help="Write the plan or comparison report here.")
+
     sub.add_parser("stages", help="List the canonical stage sequence.")
     sub.add_parser("config", help="Show the resolved configuration file path.")
 
@@ -182,6 +220,80 @@ def _cmd_compare(cfg: Config, args: argparse.Namespace) -> int:
     return 0 if result.structurally_clean else 1
 
 
+def _cmd_migrate(cfg: Config, args: argparse.Namespace) -> int:
+    from . import compare as cmp
+    from . import migrate as mig
+
+    serving = args.serving or cfg.dbname(args.dataset)
+
+    if args.rollback:
+        state = mig.rollback(cfg, args.dataset, args.rollback, serving_db=serving)
+        print(f"{state.relation} rolled back; serving the legacy relation again")
+        return 0
+
+    if args.reclaim:
+        dropped = mig.reclaim(
+            cfg, args.dataset, serving_db=serving, relations=args.relation
+        )
+        if not dropped:
+            print("nothing to reclaim: no swapped relations retain a legacy copy")
+            return 0
+        for relation, legacy in dropped:
+            print(f"{relation}: dropped {legacy}")
+        return 0
+
+    if args.plan or not args.relation:
+        rendered = mig.render_plan(
+            args.dataset, mig.plan(cfg, args.dataset, serving_db=serving)
+        )
+        if args.out:
+            Path(args.out).write_text(rendered, encoding="utf-8")
+            print(f"wrote {args.out}", file=sys.stderr)
+        else:
+            print(rendered, end="")
+        return 0
+
+    if not args.candidate:
+        print("--candidate is required when migrating relations", file=sys.stderr)
+        return 2
+
+    # Comparison is per-database, not per-relation, so it runs once and gates
+    # every relation in the batch. A structural defect anywhere in the candidate
+    # is a reason to stop, not to migrate the parts that happen to look fine.
+    failed = 0
+    for relation in args.relation:
+        mig.build(cfg, args.dataset, relation, args.candidate, serving_db=serving)
+
+    clean, result = mig.verify(
+        cfg, args.dataset, args.relation[0], args.candidate, serving_db=serving
+    )
+    if args.out:
+        Path(args.out).write_text(
+            cmp.render_markdown(result, title=args.dataset), encoding="utf-8"
+        )
+        print(f"wrote {args.out}", file=sys.stderr)
+
+    if not clean:
+        print("structural comparison FAILED; relations staged but not swapped")
+        if not args.force:
+            return 1
+        print("force set: swapping anyway")
+
+    if args.verify_only:
+        print("verify-only: relations staged, not swapped")
+        return 0 if clean else 1
+
+    for relation in args.relation:
+        try:
+            mig.swap(cfg, args.dataset, relation, serving_db=serving, force=args.force)
+            print(f"{relation}: swapped, legacy retained")
+        except RuntimeError as exc:
+            print(f"{relation}: {exc}", file=sys.stderr)
+            failed += 1
+
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -212,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_reset(cfg, args)
         if args.command == "compare":
             return _cmd_compare(cfg, args)
+        if args.command == "migrate":
+            return _cmd_migrate(cfg, args)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
