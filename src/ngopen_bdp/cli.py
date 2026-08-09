@@ -261,11 +261,42 @@ def _cmd_migrate(cfg: Config, args: argparse.Namespace) -> int:
     # every relation in the batch. A structural defect anywhere in the candidate
     # is a reason to stop, not to migrate the parts that happen to look fine.
     failed = 0
-    for relation in args.relation:
-        mig.build(cfg, args.dataset, relation, args.candidate, serving_db=serving)
+
+    # A relation joined to others by a foreign key cannot cut over alone, so
+    # asking for one member of a cluster pulls in the rest. Doing this here
+    # rather than making the caller work it out means a partial swap is not
+    # something you can ask for by accident.
+    requested = list(args.relation)
+    expanded: list[str] = []
+    for relation in requested:
+        for member in sorted(mig.cluster_for(cfg, serving, relation)):
+            if member not in expanded:
+                expanded.append(member)
+    added = [r for r in expanded if r not in requested]
+    if added:
+        print(
+            "foreign keys require these to move together, adding: " + ", ".join(added),
+            file=sys.stderr,
+        )
+
+    # A relation with no foreign keys can carry its constraints in during
+    # staging. One inside a cluster cannot: its references point at relations
+    # that are still serving the old data, so validation has to wait for the
+    # swap.
+    clustered = {r for group in mig.fk_clusters(cfg, serving) for r in group}
+
+    for relation in expanded:
+        mig.build(
+            cfg,
+            args.dataset,
+            relation,
+            args.candidate,
+            serving_db=serving,
+            defer_foreign_keys=relation in clustered,
+        )
 
     clean, result = mig.verify(
-        cfg, args.dataset, args.relation[0], args.candidate, serving_db=serving
+        cfg, args.dataset, expanded[0], args.candidate, serving_db=serving
     )
     if args.out:
         Path(args.out).write_text(
@@ -283,12 +314,23 @@ def _cmd_migrate(cfg: Config, args: argparse.Namespace) -> int:
         print("verify-only: relations staged, not swapped")
         return 0 if clean else 1
 
-    for relation in args.relation:
+    # Swap cluster by cluster. Members of a cluster go in one transaction;
+    # unrelated relations are independent and a failure in one should not
+    # abandon the others.
+    done: set[str] = set()
+    for relation in expanded:
+        if relation in done:
+            continue
+        cluster = sorted(mig.cluster_for(cfg, serving, relation) & set(expanded))
+        done.update(cluster)
         try:
-            mig.swap(cfg, args.dataset, relation, serving_db=serving, force=args.force)
-            print(f"{relation}: swapped, legacy retained")
+            mig.swap_cluster(
+                cfg, args.dataset, cluster, serving_db=serving, force=args.force
+            )
+            for member in cluster:
+                print(f"{member}: swapped, legacy retained")
         except RuntimeError as exc:
-            print(f"{relation}: {exc}", file=sys.stderr)
+            print(f"{', '.join(cluster)}: {exc}", file=sys.stderr)
             failed += 1
 
     return 1 if failed else 0

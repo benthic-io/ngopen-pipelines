@@ -234,6 +234,7 @@ def build(
     candidate_db: str,
     *,
     serving_db: str | None = None,
+    defer_foreign_keys: bool = False,
 ) -> RelationState:
     """Carry a candidate relation into the serving database's staging schema.
 
@@ -263,9 +264,23 @@ def build(
         tuples_only=False,
     )
     logger.info("transferring %s from %s", relation, candidate_db)
-    db.transfer_relation(
-        cfg, candidate_db, serving, relation, target_schema=STAGING_SCHEMA
+    deferred = db.transfer_relation(
+        cfg,
+        candidate_db,
+        serving,
+        relation,
+        target_schema=STAGING_SCHEMA,
+        defer_foreign_keys=defer_foreign_keys,
     )
+
+    # Held-back foreign keys ride along in the state row so the swap can apply
+    # them once every relation they reference has landed. Recording them here
+    # rather than in memory means a crash between build and swap does not lose
+    # them.
+    detail: dict[str, Any] = {}
+    if deferred:
+        detail["deferred_foreign_keys"] = deferred
+        logger.info("%s: %d foreign key(s) deferred", relation, len(deferred))
 
     set_state(
         cfg,
@@ -275,9 +290,10 @@ def build(
         "building",
         candidate_db=candidate_db,
         relkind=kind,
+        detail=detail,
     )
     logger.info("%s staged as %s", relation, staged)
-    return RelationState(relation, "building", candidate_db, None, kind, {})
+    return RelationState(relation, "building", candidate_db, None, kind, detail)
 
 
 def verify(
@@ -467,24 +483,118 @@ def _copy_grants(schema: str, target: str, legacy: str) -> str:
     the relation being retired rather than from configuration means the
     replacement inherits exactly what was there, including any grant made by hand
     over the years that no pipeline knows about.
+
+    Grants are read from ``pg_class.relacl`` rather than
+    ``information_schema.role_table_grants`` because the information schema only
+    reports tables and views. Materialised views are absent from it entirely, so
+    reading from there silently drops every grant on a matview and the endpoint
+    disappears from the API rather than merely erroring.
     """
     return f"""
 DO $$
-DECLARE r record;
+DECLARE
+    ref regclass := to_regclass('{schema}.{legacy}');
+    r record;
 BEGIN
+    IF ref IS NULL THEN
+        RETURN;
+    END IF;
     FOR r IN
-        SELECT grantee, privilege_type
-        FROM information_schema.role_table_grants
-        WHERE table_schema = '{schema}'
-          AND table_name = '{legacy}'
-          AND grantee <> current_user
+        SELECT pg_get_userbyid(a.grantee) AS grantee_name,
+               a.privilege_type
+        FROM pg_class c,
+             LATERAL aclexplode(coalesce(c.relacl, '{{}}'::aclitem[])) a
+        WHERE c.oid = ref
     LOOP
+        IF r.grantee_name IS NULL OR r.grantee_name = current_user THEN
+            CONTINUE;
+        END IF;
         EXECUTE format(
-            'GRANT %s ON {schema}.{target} TO %I', r.privilege_type, r.grantee
+            'GRANT %s ON {schema}.{target} TO %I', r.privilege_type, r.grantee_name
         );
     END LOOP;
 END $$;
 """
+
+
+FK_CLUSTER_SQL = """
+SELECT n1.nspname || '.' || c1.relname,
+       n2.nspname || '.' || c2.relname
+FROM pg_constraint k
+JOIN pg_class c1 ON c1.oid = k.conrelid
+JOIN pg_namespace n1 ON n1.oid = c1.relnamespace
+JOIN pg_class c2 ON c2.oid = k.confrelid
+JOIN pg_namespace n2 ON n2.oid = c2.relnamespace
+WHERE k.contype = 'f'
+  AND n1.nspname = 'public'
+  AND n2.nspname = 'public'
+"""
+
+
+def fk_clusters(cfg: Config, dbname: str) -> list[set[str]]:
+    """Group relations that are joined by foreign keys.
+
+    ``ALTER TABLE ... RENAME`` preserves the OID, so a foreign key follows the
+    relation it points at rather than the name. Swapping a parent on its own
+    therefore leaves every child still referencing the renamed legacy copy, and
+    reclaim would either fail or cascade the child constraints away. Relations
+    tied together by a foreign key have to cut over in the same transaction.
+    """
+    edges = db.psql(cfg, dbname, FK_CLUSTER_SQL)
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for row in edges:
+        if len(row) == 2 and row[0] and row[1]:
+            union(row[0], row[1])
+
+    groups: dict[str, set[str]] = {}
+    for node in parent:
+        groups.setdefault(find(node), set()).add(node)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def cluster_for(cfg: Config, dbname: str, relation: str) -> set[str]:
+    """Return every relation that must swap alongside this one."""
+    for group in fk_clusters(cfg, dbname):
+        if relation in group:
+            return group
+    return {relation}
+
+
+def _populate_staged(cfg: Config, serving: str, name: str, kind: str) -> None:
+    """Materialise a staged matview before it is swapped in.
+
+    pg_dump carries a materialised view across as a definition, not as data, so
+    a staged matview arrives empty. Refreshing it here rather than after the
+    swap means the relation is already populated at the moment it becomes the
+    served one -- there is no window in which the endpoint answers with an
+    empty result set.
+
+    The definition still points at the base relations in the serving schema, so
+    this must run after those have been swapped. In practice that ordering is
+    natural: a matview depends on its inputs, and the inputs migrate first.
+    """
+    if kind != "m":
+        return
+    logger.info("refreshing staged %s.%s before swap", STAGING_SCHEMA, name)
+    db.psql(
+        cfg,
+        serving,
+        f"REFRESH MATERIALIZED VIEW {STAGING_SCHEMA}.{name}",
+        tuples_only=False,
+    )
 
 
 def swap(
@@ -516,6 +626,8 @@ def swap(
     alter = _ALTER.get(kind, "TABLE")
     legacy = f"{name}{LEGACY_SUFFIX}"
 
+    _populate_staged(cfg, serving, name, kind)
+
     # One transaction. Readers either see the old relation for the whole of
     # their statement or the new one; there is no window where the name is
     # unresolvable.
@@ -543,6 +655,95 @@ def swap(
     return RelationState(
         relation, "swapped", current.candidate_db, f"{schema}.{legacy}", kind, {}
     )
+
+
+def swap_cluster(
+    cfg: Config,
+    dataset: str,
+    relations: Sequence[str],
+    *,
+    serving_db: str | None = None,
+    force: bool = False,
+) -> list[RelationState]:
+    """Cut over a set of foreign-key-linked relations in one transaction.
+
+    Individually swapping relations joined by foreign keys leaves the graph
+    inconsistent, because a foreign key tracks the OID of the relation it points
+    at and follows it through the rename. Doing the whole cluster inside a single
+    transaction means the constraints land pointing at the new relations, and any
+    failure rolls the entire group back rather than stranding half of it.
+    """
+    serving = serving_db or cfg.dbname(dataset)
+    states = load_states(cfg, serving, dataset)
+    ordered = sorted(relations)
+
+    staged: list[tuple[str, str, str, str, str]] = []
+    for rel in ordered:
+        current = states.get(rel)
+        if current is None or current.state not in ("building", "verified"):
+            raise RuntimeError(
+                f"{rel} is in state "
+                f"{current.state if current else 'legacy'}; nothing staged to swap"
+            )
+        if current.state != "verified" and not force:
+            raise RuntimeError(
+                f"{rel} has not passed structural comparison; "
+                "run verify first, or pass force to override"
+            )
+        schema, name = _split(rel)
+        kind = current.relkind or db.relation_kind(cfg, serving, rel) or "r"
+        staged.append((rel, schema, name, kind, _ALTER.get(kind, "TABLE")))
+
+    # Populate any staged matviews before the transaction opens, for the same
+    # reason as the single-relation path: a matview must not become the served
+    # relation while still empty.
+    for _, _, name, kind, _ in staged:
+        _populate_staged(cfg, serving, name, kind)
+
+    parts = ["BEGIN;\n"]
+    # Rename every legacy relation and its dependents aside first, so that no
+    # incoming relation collides with a name still held by the outgoing set.
+    for _, schema, name, _, alter in staged:
+        parts.append(_rename_dependents(schema, name, LEGACY_SUFFIX))
+        parts.append(
+            f"ALTER {alter} IF EXISTS {schema}.{name} "
+            f"RENAME TO {name}{LEGACY_SUFFIX};\n"
+        )
+    # Only then move the candidates in, by which point every name is free.
+    for _, schema, name, _, alter in staged:
+        parts.append(f"ALTER {alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n")
+        parts.append(_move_owned_sequences(STAGING_SCHEMA, schema, name))
+        parts.append(_copy_grants(schema, name, f"{name}{LEGACY_SUFFIX}"))
+
+    # Foreign keys held back during staging are applied last, inside the same
+    # transaction. By this point every relation in the cluster is in place, so
+    # each reference resolves against the incoming data rather than the
+    # outgoing copy it was dumped beside.
+    for rel, _, _, _, _ in staged:
+        for statement in states[rel].detail.get("deferred_foreign_keys", []):
+            text = statement.strip()
+            parts.append(text if text.endswith(";") else f"{text};")
+            parts.append("\n")
+
+    parts.append("COMMIT;")
+
+    db.psql(cfg, serving, "".join(parts), tuples_only=False)
+
+    results: list[RelationState] = []
+    for rel, schema, name, kind, _ in staged:
+        legacy = f"{schema}.{name}{LEGACY_SUFFIX}"
+        set_state(
+            cfg, serving, dataset, rel, "swapped", legacy_name=legacy, relkind=kind
+        )
+        results.append(
+            RelationState(rel, "swapped", states[rel].candidate_db, legacy, kind, {})
+        )
+    logger.info(
+        "swapped %d relations as one cluster: %s",
+        len(results),
+        ", ".join(r.relation for r in results),
+    )
+    return results
 
 
 def rollback(
@@ -603,9 +804,41 @@ def reclaim(
         and (not relations or s.relation in relations)
     ]
 
+    # Drop derived objects before the tables they read. A legacy matview whose
+    # definition still binds to a legacy table would otherwise be carried off by
+    # that table's CASCADE, and if the matview had not itself been swapped yet
+    # the served copy disappears with it. Ordering by relkind puts matviews and
+    # views ahead of tables.
+    order = {"m": 0, "v": 1, "f": 2, "r": 3, "p": 3}
+    targets.sort(key=lambda s: order.get(s.relkind or "r", 3))
+
     dropped: list[tuple[str, str]] = []
     for state in targets:
         alter = _ALTER.get(state.relkind or "r", "TABLE")
+
+        # CASCADE is necessary -- a retired relation still owns its constraints
+        # and sequences -- but it must not reach anything currently serving.
+        collateral = db.psql(
+            cfg,
+            serving,
+            f"""
+            SELECT DISTINCT dn.nspname || '.' || dc.relname
+            FROM pg_depend d
+            JOIN pg_rewrite w ON w.oid = d.objid
+            JOIN pg_class dc ON dc.oid = w.ev_class
+            JOIN pg_namespace dn ON dn.oid = dc.relnamespace
+            WHERE d.refobjid = '{state.legacy_name}'::regclass
+              AND dc.relname NOT LIKE '%{LEGACY_SUFFIX}'
+              AND dc.oid <> '{state.legacy_name}'::regclass
+            """,
+        )
+        blocking = [row[0] for row in collateral if row and row[0]]
+        if blocking:
+            raise RuntimeError(
+                f"refusing to drop {state.legacy_name}: still serving "
+                f"{', '.join(blocking)}. Migrate those first."
+            )
+
         db.psql(
             cfg,
             serving,

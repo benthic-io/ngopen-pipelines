@@ -226,24 +226,25 @@ def _rewrite_schema(
     from_schema: str,
     to_schema: str,
     table: str,
+    deferred: list[str] | None = None,
 ) -> None:
     """Redirect a pg_dump stream into a different schema.
 
-    pg_dump writes fully-qualified names, so ``SET search_path`` cannot move the
-    incoming copy aside; the statements say ``public.foo`` outright and collide
-    with the relation they are meant to replace. Rewriting the qualifier on the
-    way past is the only way to land a same-named relation beside the original.
+    pg_dump writes fully-qualified names, so ``search_path`` cannot redirect
+    them. Only the target relation and objects named after it are rewritten: a
+    blanket substitution would also catch shared machinery that lives in public
+    and must not move, such as operator classes like ``public.gin_trgm_ops``.
 
-    Only the target relation and objects named after it are rewritten. A blanket
-    ``public.`` substitution also catches things that merely live in public and
-    must not move -- operator classes like ``public.gin_trgm_ops``, PostGIS
-    functions -- producing DDL that references a schema those objects were never
-    in. Anchoring on the table name keeps owned sequences and defaults together
-    with their table while leaving shared machinery alone.
+    COPY data blocks pass through untouched, because a data row containing
+    ``public.`` is data, not a qualified name.
 
-    COPY data blocks are passed through untouched. A row that happens to contain
-    the text ``public.`` is data, not a qualified name, and rewriting it would
-    silently corrupt the very bytes this transfer exists to preserve.
+    When ``deferred`` is given, foreign-key statements are collected rather than
+    emitted, and they are collected *before* rewriting so they name the schema
+    the relations will occupy once swapped. A foreign key cannot be validated
+    while the staged copy sits beside the relations it points at: the reference
+    still resolves to the outgoing data, and fresh rows legitimately name
+    parents that exist only in the incoming set. The caller applies them once
+    the whole cluster has landed.
     """
     pattern = re.compile(
         rb"\b"
@@ -255,22 +256,53 @@ def _rewrite_schema(
     replacement = to_schema.encode() + rb".\1"
     in_copy = False
 
+    # pg_dump splits a constraint across two lines: the ALTER TABLE header and
+    # the ADD CONSTRAINT body. The header is only recognisable as part of a
+    # foreign key once the next line has been read, so it is held back.
+    pending: bytes | None = None
+
+    def flush() -> None:
+        nonlocal pending
+        if pending is not None:
+            sink.write(pattern.sub(replacement, pending))
+            pending = None
+
     for line in source:
         if in_copy:
-            # Inside a COPY block; only the terminator is SQL.
             if line.rstrip(b"\r\n") == b"\\.":
                 in_copy = False
             sink.write(line)
             continue
 
+        stripped = line.lstrip()
+
+        if deferred is not None:
+            if pending is not None:
+                if b"FOREIGN KEY" in line:
+                    deferred.append(
+                        (pending + line).decode("utf-8", "replace").strip()
+                    )
+                    pending = None
+                    continue
+                flush()
+            if stripped.startswith(b"ALTER TABLE ") and not line.rstrip(
+                b"\r\n"
+            ).endswith(b";"):
+                pending = line
+                continue
+            if b"FOREIGN KEY" in line and stripped.startswith(b"ALTER TABLE "):
+                deferred.append(line.decode("utf-8", "replace").strip())
+                continue
+
         rewritten = pattern.sub(replacement, line)
         sink.write(rewritten)
 
-        stripped = rewritten.lstrip()
-        if stripped.startswith(b"COPY ") and rewritten.rstrip(b"\r\n").endswith(
-            b"FROM stdin;"
-        ):
+        if rewritten.lstrip().startswith(b"COPY ") and rewritten.rstrip(
+            b"\r\n"
+        ).endswith(b"FROM stdin;"):
             in_copy = True
+
+    flush()
 
 
 def transfer_relation(
@@ -280,7 +312,8 @@ def transfer_relation(
     relation: str,
     *,
     target_schema: str,
-) -> int:
+    defer_foreign_keys: bool = False,
+) -> list[str]:
     """Stream one relation from one database into a schema of another.
 
     ``ALTER TABLE ... SET SCHEMA`` cannot cross a database boundary, so a
@@ -291,7 +324,7 @@ def transfer_relation(
     The bytes that were structurally verified in the candidate database are the
     same bytes that end up serving. Nothing is rebuilt in transit.
 
-    Returns the exit status of the pipeline's read end for logging.
+    Returns any foreign-key statements held back for the caller to apply.
     """
     schema, _, table = relation.rpartition(".")
     schema = schema or "public"
@@ -337,9 +370,10 @@ def transfer_relation(
         )
         assert consumer.stdin is not None
 
+        deferred: list[str] | None = [] if defer_foreign_keys else None
         try:
             _rewrite_schema(
-                producer.stdout, consumer.stdin, schema, target_schema, table
+                producer.stdout, consumer.stdin, schema, target_schema, table, deferred
             )
         finally:
             consumer.stdin.close()
@@ -361,7 +395,7 @@ def transfer_relation(
         raise DatabaseError(
             f"loading {relation} into {target_db}.{target_schema} failed: {load_err}"
         )
-    return consumer.returncode
+    return deferred or []
 
 
 def relation_kind(cfg: Config, dbname: str, relation: str) -> str | None:
