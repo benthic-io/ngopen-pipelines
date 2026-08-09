@@ -303,10 +303,16 @@ def _read_shapefile(shp: Path, congress: int, source_file: str) -> list[tuple]:
 
     rows = []
     for _, row in gdf.iterrows():
+        # A handful of source records carry attributes but no shape: the
+        # District of Columbia is present with a null geometry in congresses
+        # 103 through 114. The row is still a real historical district and the
+        # live database keeps it, so it is inserted with a NULL geom rather
+        # than dropped. ST_GeomFromText(NULL) yields NULL, so the insert
+        # statement needs no special case.
         geom = row.geometry
-        if geom is None or geom.is_empty:
-            continue
-        if geom.geom_type == "Polygon":
+        if geom is not None and geom.is_empty:
+            geom = None
+        if geom is not None and geom.geom_type == "Polygon":
             geom = MultiPolygon([geom])
 
         rows.append(
@@ -328,7 +334,7 @@ def _read_shapefile(shp: Path, congress: int, source_file: str) -> list[tuple]:
                 field(row, "lastchange"),
                 _truncate(field(row, "fromcounty"), "fromcounty"),
                 _truncate(field(row, "statefp"), "statefp"),
-                geom.wkt,
+                geom.wkt if geom is not None else None,
                 source_file,
             )
         )
