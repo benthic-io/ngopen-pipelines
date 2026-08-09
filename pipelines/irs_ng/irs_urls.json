@@ -1,0 +1,49 @@
+{
+  "soi": {
+    "base_url": "https://www.irs.gov/pub/irs-soi/",
+    "patterns": [
+      "{yy}eoextract990.zip",
+      "{yy}eoextractez.zip",
+      "{yy}eoextract990pf.zip"
+    ],
+    "extract_dir": "soi",
+    "discover": true
+  },
+  "xml": {
+    "base_url": "https://apps.irs.gov/pub/epostcard/990/xml/{yyyy}/",
+    "pattern": "{yyyy}_TEOS_XML_{part}A.zip",
+    "max_parts": 24,
+    "extract_dir": "form990/xml",
+    "discover": true
+  },
+  "bmf": {
+    "base_url": "https://nccsdata.s3.amazonaws.com/raw/bmf/",
+    "pattern": "{year}-{month:02d}-BMF.csv",
+    "extract_dir": "bmf/raw",
+    "discover": false
+  },
+  "pub78": {
+    "url": "https://apps.irs.gov/pub/epostcard/data-download-pub78.zip",
+    "extract_dir": "status",
+    "static": true
+  },
+  "revocation": {
+    "url": "https://apps.irs.gov/pub/epostcard/data-download-revocation.zip",
+    "extract_dir": "status",
+    "static": true
+  },
+  "form990n": {
+    "url": "https://apps.irs.gov/pub/epostcard/data-download-epostcard.zip",
+    "extract_dir": "form990n",
+    "static": true
+  },
+  "527": {
+    "urls": [
+      "https://forms.irs.gov/app/pod/dataDownload/dataAG",
+      "https://forms.irs.gov/app/pod/dataDownload/dataHM",
+      "https://forms.irs.gov/app/pod/dataDownload/dataNR"
+    ],
+    "extract_dir": "527",
+    "static": true
+  }
+}

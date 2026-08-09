@@ -1,0 +1,101 @@
+# NGOpen BDP pipelines - central configuration
+#
+# This is the ONLY place paths, database names, endpoints and tuning knobs
+# are declared. No pipeline module may hardcode any of them.
+#
+# Resolution order (first hit wins):
+#   1. --config <path>
+#   2. $NGOPEN_CONFIG
+#   3. ./ngopen.toml
+#   4. ~/.config/ngopen/ngopen.toml
+#
+# Secrets are NEVER stored here. They are read from the environment only.
+# Documented home for them: ~/.config/ngopen/env (chmod 0600), sourced by
+# the systemd user units. See MIGRATION.md.
+
+[paths]
+root     = "/raid_0/ngopen"
+archives = "/raid_0/ngopen/archives"
+work     = "/raid_0/ngopen/work"
+logs     = "/raid_0/ngopen/logs"
+state    = "/raid_0/ngopen/state"
+
+[database]
+host           = "localhost"
+port           = 5432
+superuser      = "postgres"
+maintenance_db = "postgres"
+# No password key by design: local pg_hba.conf uses `trust` for
+# local / 127.0.0.1 / ::1 / 192.168.1.0. Set PGPASSWORD if your host differs.
+
+[database.targets]
+usaspending = "usaspending_db"
+samer       = "sam_er"
+irs_ng      = "irs_ng"
+usp_cl      = "us_project_cl"
+up_cdmaps   = "ucla_polysci_cdmaps"
+
+[database.roles]
+restore_owner = "root"      # upstream USAspending archive objects are owned by `root`
+api_role      = "api_user"  # PostgREST authenticator
+anon_role     = "web_anon"
+
+[restore]
+jobs                             = 16
+maintenance_work_mem             = "8GB"
+max_parallel_maintenance_workers = 8
+statement_timeout                = "0"
+
+[geocoder]
+provider        = "photon"
+endpoints       = ["http://192.168.10.163:2322"]
+concurrency     = 50
+batch_size      = 1000
+timeout_seconds = 10
+retry_max       = 3
+# This Photon build rejects structured queries (HTTP 400).
+# The unified geocoder is freetext-only. Do not add a structured path.
+mode            = "freetext"
+
+[postgrest]
+base_url = "https://benthic.io/ngopen"
+
+[postgrest.ports]
+usaspending = 3000
+samer       = 3001
+irs_ng      = 3002
+usp_cl      = 3003
+up_cdmaps   = 3004
+
+[bdp]
+author_identity = "brian@benthic.io"
+author_pubkey   = "qwG8vQQN7m/uB0Nwgor3s1EJCKjqZM/SNThV+V7XumM="
+collection      = "ngopen"
+repository_url  = "https://github.com/benthic-io/ngopen-bdp-pipelines"
+signing_key     = "~/.config/bdp/signing.key"
+
+[sources.usaspending]
+discovery_url = "https://api.usaspending.gov/api/v2/bulk_download/list_database_download_files"
+variant       = "full"   # "full" | "subset"
+
+[sources.samer]
+api_base    = "https://api.sam.gov/entity-information/v4/entities"
+public_page = "https://sam.gov/data-services/Entity%20Registration%20Data"
+# SAM_API_KEY via environment. Optional: if absent the stage uses the newest
+# local archives/SAM*.dat and fails with an actionable message if none exists.
+
+[sources.irs_ng]
+url_registry = "pipelines/irs_ng/irs_urls.json"
+census_api   = "https://api.census.gov/data"
+census_years = [2023]
+# CENSUS_API_KEY via environment. Optional: ACS5 works unauthenticated below
+# ~500 requests/day/IP. Set it only to raise that ceiling.
+
+[sources.usp_cl]
+repo_url = "https://github.com/unitedstates/congress-legislators.git"
+
+[sources.up_cdmaps]
+base_url       = "https://cdmaps.polisci.ucla.edu/shp"
+congress_range = [1, 119]
+source_srid    = 4269
+target_srid    = 3857

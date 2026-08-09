@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Local overrides and secrets
+ngopen.local.toml
+.env
+
+# Working data never belongs in the repo
+archives/
+work/
+logs/
+state/
+*.log

@@ -1,0 +1,37 @@
+[project]
+name = "ngopen-bdp"
+version = "1.0.0"
+description = "BDP-enhanced ETL pipelines for the NGOpen dataset collection"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Brian Mulkern", email = "brian@benthic.io" }]
+
+dependencies = [
+    "psycopg2-binary>=2.9",
+    "aiohttp>=3.9",
+    "requests>=2.31",
+    "PyYAML>=6.0",
+    "geopandas>=1.0",
+    "shapely>=2.0",
+    "pandas>=2.0",
+    "tqdm>=4.66",
+]
+
+[project.urls]
+Homepage = "https://benthic.io/ngopen/"
+Protocol = "https://benthic.io/bdp/"
+Repository = "https://github.com/benthic-io/ngopen-bdp-pipelines"
+
+[project.scripts]
+ngopen = "ngopen_bdp.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
