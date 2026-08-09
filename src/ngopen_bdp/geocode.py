@@ -232,8 +232,8 @@ def run_batch(cfg: Config, items: Sequence[WorkItem]) -> list[Result]:
 
 GEOCODE_COLUMNS_SQL = """
 ALTER TABLE {table}
-    ADD COLUMN IF NOT EXISTS latitude       NUMERIC(10, 7),
-    ADD COLUMN IF NOT EXISTS longitude      NUMERIC(11, 7),
+    ADD COLUMN IF NOT EXISTS latitude       NUMERIC(10, 8),
+    ADD COLUMN IF NOT EXISTS longitude      NUMERIC(11, 8),
     ADD COLUMN IF NOT EXISTS geom_point     GEOMETRY(Point, 4326),
     ADD COLUMN IF NOT EXISTS geocode_date   TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS geocode_system VARCHAR(50);

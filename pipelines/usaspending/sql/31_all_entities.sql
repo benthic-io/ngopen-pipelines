@@ -83,8 +83,12 @@ SELECT
     rl.zip4,
     rl.country_code,
     rl.congressional_district,
-    rgi.latitude::double precision,
-    rgi.longitude::double precision,
+    -- Live public.all_entities carries these as bare numeric, not double
+    -- precision: build_entity_awards.py (c4dd142) added a lossy cast that the
+    -- production matview never had. numeric is canonical -- it preserves the
+    -- full NUMERIC(10,8) geocode precision instead of truncating to a float.
+    rgi.latitude,
+    rgi.longitude,
     rgi.geom_point,
     CASE WHEN rgi.latitude IS NOT NULL THEN true ELSE false END AS is_geocoded,
     ST_GeoHash(rgi.geom_point, 6) AS geohash_6,

@@ -216,8 +216,8 @@ def schema(ctx: Context) -> Outcome:
         """
         CREATE TABLE IF NOT EXISTS public.recipient_geocode_index (
             source_id      BIGINT PRIMARY KEY,
-            latitude       NUMERIC(10,7),
-            longitude      NUMERIC(11,7),
+            latitude       NUMERIC(10,8),
+            longitude      NUMERIC(11,8),
             geom_point     GEOMETRY(Point, 4326),
             geocode_date   TIMESTAMPTZ,
             geocode_system VARCHAR(50)
@@ -225,6 +225,12 @@ def schema(ctx: Context) -> Outcome:
         """,
         tuples_only=False,
     )
+
+    # The live server carries a BEFORE INSERT OR UPDATE trigger that derives
+    # geom_point from latitude/longitude. The pipeline computes geom_point
+    # explicitly, so the trigger is redundant for pipeline writes -- but it is
+    # the only guard for manual UPDATEs, and it is part of the live structure.
+    db.psql_file(ctx.cfg, ctx.dbname, RECOVERED_DIR / "geom_point_trigger.sql")
     return Outcome.COMPLETED
 
 

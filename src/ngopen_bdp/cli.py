@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Callable
 
 from . import log
@@ -84,6 +85,31 @@ def build_parser() -> argparse.ArgumentParser:
     reset.add_argument("--stage", choices=STAGE_NAMES, help="Default: all stages.")
     reset.add_argument("--dbname")
 
+    compare = sub.add_parser(
+        "compare",
+        help="Diff two databases structurally (gate) and by content (advisory).",
+    )
+    compare.add_argument("dataset", choices=DATASETS)
+    compare.add_argument(
+        "--left",
+        help="Reference database. Default: the serving database for this dataset.",
+    )
+    compare.add_argument("--right", required=True, help="Candidate database.")
+    compare.add_argument(
+        "--schema",
+        action="append",
+        help="Schema to compare (repeatable). Default: public.",
+    )
+    compare.add_argument(
+        "--no-content",
+        action="store_true",
+        help="Skip the advisory row-count section.",
+    )
+    compare.add_argument("--out", help="Write the markdown report here.")
+    compare.add_argument(
+        "--json", dest="as_json", action="store_true", help="Emit JSON, not markdown."
+    )
+
     sub.add_parser("stages", help="List the canonical stage sequence.")
     sub.add_parser("config", help="Show the resolved configuration file path.")
 
@@ -131,6 +157,31 @@ def _cmd_reset(cfg: Config, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_compare(cfg: Config, args: argparse.Namespace) -> int:
+    import json as _json
+
+    from . import compare as cmp
+
+    left = args.left or cfg.dbname(args.dataset)
+    schemas = args.schema or ["public"]
+
+    result = cmp.compare(cfg, left, args.right, schemas, content=not args.no_content)
+
+    if args.as_json:
+        rendered = _json.dumps(cmp.render_json(result), indent=2) + "\n"
+    else:
+        rendered = cmp.render_markdown(result, title=args.dataset)
+
+    if args.out:
+        Path(args.out).write_text(rendered, encoding="utf-8")
+        print(f"wrote {args.out}", file=sys.stderr)
+    else:
+        print(rendered, end="")
+
+    # Structural drift is a gate: a non-zero exit lets callers script on it.
+    return 0 if result.structurally_clean else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -159,6 +210,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_status(cfg, args)
         if args.command == "reset":
             return _cmd_reset(cfg, args)
+        if args.command == "compare":
+            return _cmd_compare(cfg, args)
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2
