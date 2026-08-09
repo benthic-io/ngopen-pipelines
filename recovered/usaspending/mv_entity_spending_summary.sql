@@ -11,9 +11,6 @@
 -- kind:     materialized view
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_entity_spending_summary AS
-WARNING:  database "usaspending_db" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE usaspending_db REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
  SELECT e.entity_id,
     e.legal_business_name,
     e.uei,

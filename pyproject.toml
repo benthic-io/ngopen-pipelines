@@ -31,7 +31,23 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-package-dir = { "" = "src" }
+packages = [
+    "ngopen_bdp",
+    "pipelines",
+    "pipelines.irs_ng",
+    "pipelines.samer",
+    "pipelines.up_cdmaps",
+    "pipelines.usaspending",
+    "pipelines.usp_cl",
+]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools.package-dir]
+ngopen_bdp = "src/ngopen_bdp"
+pipelines = "pipelines"
+
+[tool.setuptools.package-data]
+"pipelines.irs_ng" = ["sql/*.sql", "*.json"]
+"pipelines.samer" = ["sql/*.sql"]
+"pipelines.up_cdmaps" = ["sql/*.sql"]
+"pipelines.usaspending" = ["sql/*.sql"]
+"pipelines.usp_cl" = ["sql/*.sql"]

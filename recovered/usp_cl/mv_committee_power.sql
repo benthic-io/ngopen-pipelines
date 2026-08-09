@@ -11,9 +11,6 @@
 -- kind:     materialized view
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_committee_power AS
-WARNING:  database "us_project_cl" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE us_project_cl REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
  SELECT c.committee_id,
     c.thomas_id,
     c.name AS committee_name,

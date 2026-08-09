@@ -11,9 +11,6 @@
 -- kind:     materialized view
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_nonprofit_profile AS
-WARNING:  database "irs_ng" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE irs_ng REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
  SELECT b.ein,
     b.org_name_current,
     b.org_name_sec,

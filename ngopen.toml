@@ -41,6 +41,11 @@ api_role      = "api_user"  # PostgREST authenticator
 anon_role     = "web_anon"
 
 [restore]
+# Roles that must exist before pg_restore runs. Upstream archives carry
+# ownership metadata (ALTER SCHEMA ... OWNER TO ...) referencing roles from the
+# publisher's own cluster; the restore aborts if they are absent. Created
+# NOLOGIN -- they are ownership placeholders, not accounts.
+archive_roles                    = ["root", "etl_user"]
 jobs                             = 16
 maintenance_work_mem             = "8GB"
 max_parallel_maintenance_workers = 8

@@ -10,9 +10,6 @@
 -- object:   rpc_find_district
 -- kind:     function
 
-WARNING:  database "ucla_polysci_cdmaps" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE ucla_polysci_cdmaps REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
 CREATE OR REPLACE FUNCTION public.rpc_find_district(lat double precision, lon double precision, congress integer DEFAULT 118)
  RETURNS TABLE(district_id character varying, statename character varying, district integer, congress_number integer)
  LANGUAGE sql

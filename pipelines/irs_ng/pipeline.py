@@ -360,6 +360,13 @@ def derive(ctx: Context) -> Outcome:
         ctx.log.info("refreshing %s", matview)
         db.psql(ctx.cfg, ctx.dbname, f"REFRESH MATERIALIZED VIEW {matview};")
 
+    # Indexes on these matviews were held back from 04_index because their
+    # targets did not exist yet.
+    derived_idx = RECOVERED_DIR / "indexes_derived.sql"
+    if derived_idx.exists():
+        ctx.log.info("applying recovered indexes on derived objects")
+        db.psql_file(ctx.cfg, ctx.dbname, derived_idx)
+
     return Outcome.COMPLETED
 
 

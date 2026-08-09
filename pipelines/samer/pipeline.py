@@ -27,6 +27,7 @@ from ngopen_bdp import db, geocode
 from ngopen_bdp.stages import Context
 
 DATASET = "samer"
+CURSOR_KEY = "sam_registrations"
 SQL_DIR = Path(__file__).resolve().parent / "sql"
 RECOVERED_DIR = Path(__file__).resolve().parents[2] / "recovered" / "samer"
 
@@ -415,7 +416,10 @@ def geocode_stage(ctx: Context) -> Outcome:
             break
         with db.connect(ctx.cfg, ctx.dbname) as conn:
             cur = conn.cursor()
-            cur.execute(FETCH_UNGEOCODED, {"cursor": cursor.get(), "limit": take})
+            cur.execute(
+                FETCH_UNGEOCODED,
+                {"cursor": cursor.get(CURSOR_KEY), "limit": take},
+            )
             rows = cur.fetchall()
             if not rows:
                 break
@@ -431,7 +435,7 @@ def geocode_stage(ctx: Context) -> Outcome:
                 geocode.write_results(conn, "public.sam_registrations", "id", results)
             conn.commit()
 
-        cursor.set(rows[-1][0])
+        cursor.set(CURSOR_KEY, rows[-1][0])
         done += len(rows)
         ctx.log.info("geocoded %d / %d rows", len(results), done)
 
@@ -452,6 +456,14 @@ def derive(ctx: Context) -> Outcome:
         ctx.cfg, ctx.dbname, "REFRESH MATERIALIZED VIEW public.mv_contractor_registry;"
     )
     ctx.log.info("materialized views refreshed")
+
+    # Indexes on these matviews were held back from 04_index because their
+    # targets did not exist yet.
+    derived_idx = RECOVERED_DIR / "indexes_derived.sql"
+    if derived_idx.exists():
+        ctx.log.info("applying recovered indexes on derived objects")
+        db.psql_file(ctx.cfg, ctx.dbname, derived_idx)
+
     return Outcome.COMPLETED
 
 

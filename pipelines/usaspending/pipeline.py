@@ -22,6 +22,7 @@ from ngopen_bdp import db, fetch, geocode
 from ngopen_bdp.stages import Context
 
 DATASET = "usaspending"
+CURSOR_KEY = "recipient_lookup"
 SQL_DIR = Path(__file__).parent / "sql"
 RECOVERED_DIR = Path(__file__).resolve().parents[2] / "recovered" / "usaspending"
 
@@ -132,9 +133,9 @@ def verify(ctx: Context) -> Outcome:
             shutil.rmtree(tmp, ignore_errors=True)
 
     toc = db.pg_restore_list(dump)
-    (ctx.work / "toc.list").write_text(toc)
-    tables = sum(1 for line in toc.splitlines() if "TABLE DATA" in line)
-    matviews = sum(1 for line in toc.splitlines() if "MATERIALIZED VIEW DATA" in line)
+    (ctx.work / "toc.list").write_text("\n".join(toc))
+    tables = sum(1 for line in toc if "TABLE DATA" in line)
+    matviews = sum(1 for line in toc if "MATERIALIZED VIEW DATA" in line)
     ctx.log.info(
         "archive holds %d table-data and %d matview-data entries", tables, matviews
     )
@@ -165,11 +166,27 @@ def restore(ctx: Context) -> Outcome:
         ctx.log.info("dry-run: would restore %s into %s", dump, ctx.dbname)
         return Outcome.COMPLETED
 
+    archive_roles = ctx.cfg.get("restore.archive_roles", [])
+    created = db.ensure_roles(ctx.cfg, archive_roles)
+    if created:
+        ctx.log.info("created archive ownership roles: %s", ", ".join(created))
+
     db.create_database(ctx.cfg, ctx.dbname, owner=ctx.cfg.role("restore_owner"))
     db.apply_session_tuning(ctx.cfg, ctx.dbname)
 
+    # --clean --if-exists makes the stage re-entrant. pg_restore otherwise dies
+    # on CREATE SCHEMA the moment a previous attempt got far enough to create
+    # anything, and a crash mid-restore is exactly the case this pipeline is
+    # built to survive. It drops only what the archive itself carries, so
+    # bdp_meta.run_ledger -- which is not in the archive -- is left intact.
     ctx.log.info("phase 1: base tables (this is the long one)")
-    db.pg_restore(ctx.cfg, ctx.dbname, dump, use_list=base_list)
+    db.pg_restore(
+        ctx.cfg,
+        ctx.dbname,
+        dump,
+        use_list=base_list,
+        extra=("--clean", "--if-exists"),
+    )
 
     ctx.log.info("analyzing before matview materialization")
     db.psql(ctx.cfg, ctx.dbname, "ANALYZE;", tuples_only=False)
@@ -254,7 +271,10 @@ def geocode_stage(ctx: Context) -> Outcome:
             if size <= 0:
                 break
             with conn.cursor() as cur:
-                cur.execute(FETCH_UNGEOCODED, {"cursor": cursor.get(0), "limit": size})
+                cur.execute(
+                    FETCH_UNGEOCODED,
+                    {"cursor": cursor.get(CURSOR_KEY), "limit": size},
+                )
                 rows = cur.fetchall()
             if not rows:
                 break
@@ -274,9 +294,11 @@ def geocode_stage(ctx: Context) -> Outcome:
                 insert=True,
             )
             conn.commit()
-            cursor.set(rows[-1][0])
+            cursor.set(CURSOR_KEY, rows[-1][0])
             total += len(rows)
-            ctx.log.info("geocoded %d recipients (cursor=%s)", total, cursor.get(0))
+            ctx.log.info(
+                "geocoded %d recipients (cursor=%s)", total, cursor.get(CURSOR_KEY)
+            )
 
     ctx.log.info("geocode stage finished: %d rows processed", total)
     return Outcome.COMPLETED
@@ -297,6 +319,14 @@ def derive(ctx: Context) -> Outcome:
             continue
         ctx.log.info("building %s", path.name)
         db.psql_file(ctx.cfg, ctx.dbname, path)
+
+    # Indexes on these matviews were held back from 04_index because their
+    # targets did not exist yet.
+    derived_idx = RECOVERED_DIR / "indexes_derived.sql"
+    if derived_idx.exists():
+        ctx.log.info("applying recovered indexes on derived objects")
+        db.psql_file(ctx.cfg, ctx.dbname, derived_idx)
+
     return Outcome.COMPLETED
 
 

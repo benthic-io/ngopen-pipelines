@@ -17,7 +17,12 @@ SELECT * FROM (
         ae.is_geocoded,
         'prime' AS award_type,
         pa.award_id,
-        pa.fiscal_year,
+        -- prime_awards.fiscal_year is integer (rpt.award_search.fiscal_year);
+        -- subawards.fiscal_year is text (rpt.subaward_search.fy). The UNION ALL
+        -- below requires one type. The live usaspending_db matview carries this
+        -- ::text cast, but build_entity_awards.py (c4dd142) never did -- the fix
+        -- was applied by hand in psql and lost. Restored here.
+        pa.fiscal_year::text AS fiscal_year,
         pa.action_date,
         pa.total_obligation,
         pa.award_amount,

@@ -1,18 +1,17 @@
--- RECOVERED INDEX DDL
+-- RECOVERED INDEX DDL -- base relations
 -- provenance: recovered
 --
--- Indexes present in the live benthic.io database `usaspending_db` that are NOT created
--- by any known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
+-- Indexes present in the live benthic.io database that are NOT created by any
+-- known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
 -- Constraint-backed indexes (*_pkey, *_key) are excluded: they are created
 -- implicitly by their table definitions.
 --
--- Redundant pairs deliberately preserved here for audit fidelity; see
--- MIGRATION.md for the de-duplication plan.
+-- Applied in stage 04_index. Indexes whose target is a materialized view built
+-- by stage 06_derive live in indexes_derived.sql instead -- they cannot be
+-- created here because the relation does not exist yet.
+--
+-- Redundant pairs deliberately preserved for audit fidelity; see MIGRATION.md.
 
-
--- public.all_entities
-CREATE INDEX IF NOT EXISTS idx_ae_duns ON public.all_entities USING btree (duns);
-CREATE INDEX IF NOT EXISTS idx_ae_uei ON public.all_entities USING btree (uei);
 
 -- public.appropriation_account_balances
 CREATE INDEX IF NOT EXISTS idx_aab_final_of_fy ON public.appropriation_account_balances USING btree (final_of_fy);
@@ -27,11 +26,6 @@ CREATE INDEX IF NOT EXISTS idx_cgac_code ON public.cgac USING btree (cgac_code);
 
 -- public.disaster_emergency_fund_code
 CREATE INDEX IF NOT EXISTS idx_defc_code ON public.disaster_emergency_fund_code USING btree (code);
-
--- public.entity_awards
-CREATE INDEX IF NOT EXISTS idx_ea_award_id ON public.entity_awards USING btree (award_id);
-CREATE INDEX IF NOT EXISTS idx_ea_entity_id ON public.entity_awards USING btree (entity_id);
-CREATE INDEX IF NOT EXISTS idx_ea_entity_id_action_date ON public.entity_awards USING btree (entity_id, action_date DESC);
 
 -- public.federal_account
 CREATE INDEX IF NOT EXISTS idx_fa_code ON public.federal_account USING btree (federal_account_code);
@@ -59,23 +53,6 @@ CREATE INDEX IF NOT EXISTS idx_frec_code ON public.frec USING btree (frec_code);
 CREATE INDEX IF NOT EXISTS idx_hpd_duns ON public.historic_parent_duns USING btree (awardee_or_recipient_uniqu);
 CREATE INDEX IF NOT EXISTS idx_hpd_parent_duns ON public.historic_parent_duns USING btree (ultimate_parent_unique_ide);
 CREATE INDEX IF NOT EXISTS idx_hpd_year ON public.historic_parent_duns USING btree (year);
-
--- public.mv_covid_spending
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcs_fy ON public.mv_covid_spending USING btree (fiscal_year);
-
--- public.mv_district_spending
-CREATE INDEX IF NOT EXISTS idx_mds_fiscal_year ON public.mv_district_spending USING btree (fiscal_year);
-CREATE INDEX IF NOT EXISTS idx_mds_obligation ON public.mv_district_spending USING btree (total_obligation DESC);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mds_state_dist_fy ON public.mv_district_spending USING btree (state, district, fiscal_year);
-
--- public.mv_entity_spending_summary
-CREATE INDEX IF NOT EXISTS idx_mess_agency ON public.mv_entity_spending_summary USING btree (top_awarding_agency);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mess_entity_id ON public.mv_entity_spending_summary USING btree (entity_id);
-CREATE INDEX IF NOT EXISTS idx_mess_geom ON public.mv_entity_spending_summary USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_mess_name_trgm ON public.mv_entity_spending_summary USING gin (legal_business_name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_mess_obligation ON public.mv_entity_spending_summary USING btree (total_obligation DESC);
-CREATE INDEX IF NOT EXISTS idx_mess_state ON public.mv_entity_spending_summary USING btree (state);
-CREATE INDEX IF NOT EXISTS idx_mess_uei ON public.mv_entity_spending_summary USING btree (uei);
 
 -- public.naics
 CREATE INDEX IF NOT EXISTS idx_naics_code ON public.naics USING btree (code);
@@ -106,9 +83,6 @@ CREATE INDEX IF NOT EXISTS idx_cfda_title_trgm ON public.references_cfda USING g
 
 -- public.state_data
 CREATE INDEX IF NOT EXISTS idx_state_data_fips ON public.state_data USING btree (fips);
-
--- public.subawards
-CREATE INDEX IF NOT EXISTS idx_subawards_sub_recipient_duns ON public.subawards USING btree (sub_recipient_duns) WHERE (sub_recipient_duns IS NOT NULL);
 
 -- public.submission_attributes
 CREATE INDEX IF NOT EXISTS idx_sa_reporting_fiscal_year ON public.submission_attributes USING btree (reporting_fiscal_year);

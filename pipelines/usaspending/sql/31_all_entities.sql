@@ -1,7 +1,12 @@
 -- Extracted verbatim from ngopen/build_entity_awards.py (SQL_ALL_ENTITIES)
 -- Source commit: c4dd142  Extracted: 2026-08-08
--- Drop existing
+-- Drop existing. Order matters: all_entities depends on the staging tables,
+-- so the matview must go first, then its inputs. Doing this at the top rather
+-- than the bottom is what makes the file re-runnable; see the note at the end.
 DROP MATERIALIZED VIEW IF EXISTS public.all_entities CASCADE;
+DROP TABLE IF EXISTS _staging_award_agg CASCADE;
+DROP TABLE IF EXISTS _staging_subaward_agg CASCADE;
+DROP TABLE IF EXISTS _staging_subaward_entities CASCADE;
 
 -- Stage 1: Award aggregation by recipient
 CREATE TABLE _staging_award_agg AS
@@ -139,7 +144,22 @@ CREATE INDEX idx_all_entities_geom_point ON public.all_entities USING GIST(geom_
 CREATE INDEX idx_all_entities_geohash_6 ON public.all_entities(geohash_6) WHERE geohash_6 IS NOT NULL;
 CREATE INDEX idx_all_entities_total_obligation ON public.all_entities(total_obligation) WHERE total_obligation > 0;
 
--- Cleanup staging tables
-DROP TABLE IF EXISTS _staging_award_agg CASCADE;
-DROP TABLE IF EXISTS _staging_subaward_agg CASCADE;
-DROP TABLE IF EXISTS _staging_subaward_entities CASCADE;
+-- Staging cleanup: DELIBERATELY REMOVED.
+--
+-- The original build_entity_awards.py ended with:
+--     DROP TABLE IF EXISTS _staging_award_agg CASCADE;
+--     DROP TABLE IF EXISTS _staging_subaward_agg CASCADE;
+--     DROP TABLE IF EXISTS _staging_subaward_entities CASCADE;
+--
+-- public.all_entities is a materialized view that SELECTs from all three
+-- staging tables, so it depends on them. CASCADE therefore does not merely
+-- drop the staging tables -- it drops all_entities along with them, and with
+-- it every downstream view that joins to all_entities.
+--
+-- This is why the three _staging_* tables are still present in the live
+-- usaspending_db: the cleanup could never succeed without destroying its own
+-- output, so the surviving state is always "staging tables present".
+--
+-- The staging tables are kept, matching live reality. They are lineage
+-- intermediates, are not exposed through PostgREST, and are truncated and
+-- rebuilt by the DROP ... IF EXISTS at the top of this file on every run.

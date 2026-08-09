@@ -10,9 +10,6 @@
 -- object:   rpc_nonprofits_in_district
 -- kind:     function
 
-WARNING:  database "irs_ng" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE irs_ng REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
 CREATE OR REPLACE FUNCTION public.rpc_nonprofits_in_district(state_name text, district_num integer, congress integer DEFAULT 118)
  RETURNS TABLE(ein character varying, org_name text, ntee character varying, state character varying, subsection character varying, revenue bigint)
  LANGUAGE sql

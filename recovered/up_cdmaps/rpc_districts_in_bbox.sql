@@ -10,9 +10,6 @@
 -- object:   rpc_districts_in_bbox
 -- kind:     function
 
-WARNING:  database "ucla_polysci_cdmaps" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE ucla_polysci_cdmaps REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
 CREATE OR REPLACE FUNCTION public.rpc_districts_in_bbox(min_lat double precision, max_lat double precision, min_lon double precision, max_lon double precision, congress integer DEFAULT 118)
  RETURNS TABLE(id integer, statename character varying, district integer, district_id character varying)
  LANGUAGE sql

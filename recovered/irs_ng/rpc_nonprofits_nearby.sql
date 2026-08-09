@@ -10,9 +10,6 @@
 -- object:   rpc_nonprofits_nearby
 -- kind:     function
 
-WARNING:  database "irs_ng" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE irs_ng REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
 CREATE OR REPLACE FUNCTION public.rpc_nonprofits_nearby(lat double precision, lon double precision, radius_meters double precision DEFAULT 10000)
  RETURNS TABLE(ein character varying, org_name text, ntee character varying, state character varying, distance_meters double precision)
  LANGUAGE sql

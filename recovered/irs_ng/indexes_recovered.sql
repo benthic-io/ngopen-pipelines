@@ -1,13 +1,16 @@
--- RECOVERED INDEX DDL
+-- RECOVERED INDEX DDL -- base relations
 -- provenance: recovered
 --
--- Indexes present in the live benthic.io database `irs_ng` that are NOT created
--- by any known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
+-- Indexes present in the live benthic.io database that are NOT created by any
+-- known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
 -- Constraint-backed indexes (*_pkey, *_key) are excluded: they are created
 -- implicitly by their table definitions.
 --
--- Redundant pairs deliberately preserved here for audit fidelity; see
--- MIGRATION.md for the de-duplication plan.
+-- Applied in stage 04_index. Indexes whose target is a materialized view built
+-- by stage 06_derive live in indexes_derived.sql instead -- they cannot be
+-- created here because the relation does not exist yet.
+--
+-- Redundant pairs deliberately preserved for audit fidelity; see MIGRATION.md.
 
 
 -- public.bmf_organization_snapshots
@@ -60,21 +63,6 @@ CREATE INDEX IF NOT EXISTS idx_990pf_tax_year ON public.form990_soi_private_foun
 CREATE INDEX IF NOT EXISTS idx_990td_ein ON public.form990t_details USING btree (ein);
 CREATE INDEX IF NOT EXISTS idx_990td_ein_period ON public.form990t_details USING btree (ein, tax_period);
 CREATE INDEX IF NOT EXISTS idx_990td_tax_period ON public.form990t_details USING btree (tax_period);
-
--- public.mv_nonprofit_profile
-CREATE INDEX IF NOT EXISTS idx_mnp_geom ON public.mv_nonprofit_profile USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_mnp_name_trgm ON public.mv_nonprofit_profile USING gin (org_name_current gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_mnp_ntee ON public.mv_nonprofit_profile USING btree (ntee_irs);
-CREATE INDEX IF NOT EXISTS idx_mnp_revenue ON public.mv_nonprofit_profile USING btree (recent_revenue DESC);
-CREATE INDEX IF NOT EXISTS idx_mnp_revoked ON public.mv_nonprofit_profile USING btree (revocation_date) WHERE (revocation_date IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_mnp_state ON public.mv_nonprofit_profile USING btree (f990_org_addr_state);
-CREATE INDEX IF NOT EXISTS idx_mnp_subsection ON public.mv_nonprofit_profile USING btree (bmf_subsection_code);
-
--- public.mv_org_financial_health
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mfh_ein ON public.mv_org_financial_health USING btree (ein);
-CREATE INDEX IF NOT EXISTS idx_mfh_health ON public.mv_org_financial_health USING btree (financial_health);
-CREATE INDEX IF NOT EXISTS idx_mfh_revenue ON public.mv_org_financial_health USING btree (avg_revenue DESC);
-CREATE INDEX IF NOT EXISTS idx_mfh_years ON public.mv_org_financial_health USING btree (years_of_data);
 
 -- public.political_orgs_527
 CREATE INDEX IF NOT EXISTS idx_527_geo_mod2 ON public.political_orgs_527 USING btree (((id % 2)), id) WHERE ((latitude IS NULL) AND (address IS NOT NULL) AND ((address)::text <> ''::text));

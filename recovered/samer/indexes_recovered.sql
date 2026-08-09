@@ -1,24 +1,17 @@
--- RECOVERED INDEX DDL
+-- RECOVERED INDEX DDL -- base relations
 -- provenance: recovered
 --
--- Indexes present in the live benthic.io database `sam_er` that are NOT created
--- by any known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
+-- Indexes present in the live benthic.io database that are NOT created by any
+-- known ETL script. Extracted verbatim from pg_indexes on 2026-08-08.
 -- Constraint-backed indexes (*_pkey, *_key) are excluded: they are created
 -- implicitly by their table definitions.
 --
--- Redundant pairs deliberately preserved here for audit fidelity; see
--- MIGRATION.md for the de-duplication plan.
+-- Applied in stage 04_index. Indexes whose target is a materialized view built
+-- by stage 06_derive live in indexes_derived.sql instead -- they cannot be
+-- created here because the relation does not exist yet.
+--
+-- Redundant pairs deliberately preserved for audit fidelity; see MIGRATION.md.
 
-
--- public.mv_contractor_registry
-CREATE INDEX IF NOT EXISTS idx_mcr_duns ON public.mv_contractor_registry USING btree (duns);
-CREATE INDEX IF NOT EXISTS idx_mcr_expiration ON public.mv_contractor_registry USING btree (registration_expiration);
-CREATE INDEX IF NOT EXISTS idx_mcr_geom ON public.mv_contractor_registry USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_mcr_naics ON public.mv_contractor_registry USING btree (primary_naics);
-CREATE INDEX IF NOT EXISTS idx_mcr_name_trgm ON public.mv_contractor_registry USING gin (legal_business_name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_mcr_state ON public.mv_contractor_registry USING btree (physical_state);
-CREATE INDEX IF NOT EXISTS idx_mcr_status ON public.mv_contractor_registry USING btree (registration_status);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcr_uei ON public.mv_contractor_registry USING btree (uei);
 
 -- public.sam_registrations
 CREATE INDEX IF NOT EXISTS idx_sam_dba_trgm ON public.sam_registrations USING gin (dba_name gin_trgm_ops);

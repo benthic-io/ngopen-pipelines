@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import subprocess
 from contextlib import contextmanager
-from typing import Any, Iterator, Sequence
+from pathlib import Path
+from typing import Any, Iterable, Iterator, Sequence
 
 from .config import Config
 
@@ -64,7 +65,7 @@ def psql(
     ]
 
 
-def psql_file(cfg: Config, dbname: str, path: str) -> None:
+def psql_file(cfg: Config, dbname: str, path: str | Path) -> None:
     """Execute a .sql file. Stops on the first error."""
     args = [
         "psql",
@@ -73,7 +74,7 @@ def psql_file(cfg: Config, dbname: str, path: str) -> None:
         "ON_ERROR_STOP=1",
         "-q",
         "-f",
-        path,
+        str(path),
     ]
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -104,6 +105,34 @@ def create_database(cfg: Config, dbname: str, *, owner: str | None = None) -> No
     if owner:
         stmt += f" OWNER {quote_ident(owner)}"
     psql(cfg, cfg.maintenance_db, stmt, tuples_only=False)
+
+
+def ensure_roles(cfg: Config, roles: Iterable[str]) -> list[str]:
+    """Create any missing roles named in an upstream archive's ownership metadata.
+
+    A pg_dump archive records the owner of every object it carries. Restoring it
+    into a cluster that lacks those roles aborts on the first ALTER ... OWNER TO
+    statement. The alternative, --no-owner, silently rewrites ownership and
+    destroys a piece of the provenance chain, so instead the roles are created
+    as NOLOGIN placeholders: they own objects, they cannot authenticate.
+    """
+    created: list[str] = []
+    for role in roles:
+        exists = scalar(
+            cfg,
+            cfg.maintenance_db,
+            f"SELECT 1 FROM pg_roles WHERE rolname = {quote_literal(role)}",
+        )
+        if exists:
+            continue
+        psql(
+            cfg,
+            cfg.maintenance_db,
+            f"CREATE ROLE {quote_ident(role)} NOLOGIN",
+            tuples_only=False,
+        )
+        created.append(role)
+    return created
 
 
 def drop_database(cfg: Config, dbname: str) -> None:
@@ -143,9 +172,9 @@ def quote_literal(value: str) -> str:
 def pg_restore(
     cfg: Config,
     dbname: str,
-    dump_dir: str,
+    dump_dir: str | Path,
     *,
-    use_list: str | None = None,
+    use_list: str | Path | None = None,
     jobs: int | None = None,
     no_owner: bool = False,
     extra: Sequence[str] = (),
@@ -167,11 +196,11 @@ def pg_restore(
         "--exit-on-error",
     ]
     if use_list:
-        args += ["--use-list", use_list]
+        args += ["--use-list", str(use_list)]
     if no_owner:
         args.append("--no-owner")
     args += list(extra)
-    args.append(dump_dir)
+    args.append(str(dump_dir))
 
     proc = subprocess.run(args, capture_output=True, text=True)
     if proc.returncode != 0:
@@ -179,10 +208,10 @@ def pg_restore(
         raise DatabaseError(f"pg_restore failed on {dbname}:\n{tail}")
 
 
-def pg_restore_list(dump_dir: str) -> list[str]:
+def pg_restore_list(dump_dir: str | Path) -> list[str]:
     """Return the archive table of contents as lines."""
     proc = subprocess.run(
-        ["pg_restore", "--list", dump_dir], capture_output=True, text=True
+        ["pg_restore", "--list", str(dump_dir)], capture_output=True, text=True
     )
     if proc.returncode != 0:
         raise DatabaseError(f"pg_restore --list failed: {proc.stderr.strip()}")

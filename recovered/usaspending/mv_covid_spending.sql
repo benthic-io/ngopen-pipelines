@@ -11,9 +11,6 @@
 -- kind:     materialized view
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS public.mv_covid_spending AS
-WARNING:  database "usaspending_db" has a collation version mismatch
-DETAIL:  The database was created using collation version 2.42, but the operating system provides version 2.43.
-HINT:  Rebuild all objects in this database that use the default collation and run ALTER DATABASE usaspending_db REFRESH COLLATION VERSION, or build PostgreSQL with the right library version.
  SELECT fiscal_year,
     count(DISTINCT award_id) AS award_count,
     sum(total_covid_obligation) AS total_covid_obligation,
