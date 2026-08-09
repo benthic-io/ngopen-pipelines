@@ -34,6 +34,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from psycopg2.extras import execute_batch
+
+from . import db
 from .config import Config
 from .log import get
 
@@ -297,7 +300,6 @@ def write_results(
     ``insert=True`` upserts into a side index table (the recipient geocode
     index pattern); the default updates the source table in place.
     """
-    from psycopg2.extras import execute_batch
 
     _check_ident(table, "table name")
     _check_ident(key_column, "column name")
@@ -364,3 +366,102 @@ def write_results(
     with conn.cursor() as cur:
         execute_batch(cur, sql, params, page_size=500)
     return len(params)
+
+
+def preserve(
+    cfg: Config,
+    source_db: str,
+    target_db: str,
+    table: str,
+    match_columns: Sequence[str],
+) -> int:
+    """Carry geocodes from an existing database into a freshly built one.
+
+    Geocoding is the most expensive stage in every pipeline and the least
+    interesting to repeat: an address that resolved last month resolves to the
+    same point this month. When a candidate database is rebuilt from scratch it
+    starts with no coordinates at all, so without this it would re-ask the
+    geocoder several hundred thousand questions it has already answered.
+
+    Rows are matched on ``match_columns`` rather than on a surrogate key,
+    because the candidate assigns its own identifiers. Matching on the address
+    itself is also what makes this safe: a row whose address changed will not
+    match, and so will be geocoded fresh rather than inheriting a coordinate
+    that no longer describes it.
+
+    Returns the number of rows that inherited a coordinate.
+    """
+    _check_ident(table, "table")
+    for column in match_columns:
+        _check_ident(column, "match column")
+
+    log = get("geocode")
+    # Plain equality, not IS NOT DISTINCT FROM. The latter reads better and
+    # handles NULLs directly, but Postgres cannot hash or index it, so the
+    # planner falls back to a nested loop over the whole staging table -- on a
+    # few million rows that is the difference between a minute and an hour.
+    # Nulls are normalised to the empty string on both sides instead, which
+    # restores a hash join at the cost of conflating NULL with ''. For address
+    # components that distinction carries no meaning anyway.
+    join = " AND ".join(f"COALESCE(t.{c}::text, '') = s.{c}" for c in match_columns)
+    select_cols = ", ".join(match_columns)
+
+    # The two databases cannot see each other, so the coordinates travel
+    # through this process. Only geocoded rows are worth carrying.
+    dump = db.psql(
+        cfg,
+        source_db,
+        f"SELECT {select_cols}, latitude, longitude, geocode_date, geocode_system "
+        f"FROM {table} WHERE latitude IS NOT NULL",
+    )
+    if not dump:
+        log.info("no geocodes to carry from %s", source_db)
+        return 0
+
+    log.info("carrying %d geocoded rows from %s", len(dump), source_db)
+
+    staging = "_bdp_geocode_carry"
+    col_defs = ", ".join(f"{c} TEXT" for c in match_columns)
+    with db.connect(cfg, target_db) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {staging}")
+            cur.execute(
+                f"CREATE UNLOGGED TABLE {staging} ({col_defs}, "
+                "latitude NUMERIC(10,8), longitude NUMERIC(11,8), "
+                "geocode_date TIMESTAMPTZ, geocode_system VARCHAR(50))"
+            )
+            placeholders = ", ".join(["%s"] * (len(match_columns) + 4))
+            # Match columns are normalised to '' to line up with the COALESCE
+            # in the join; the geocode columns keep their nulls.
+            width = len(match_columns)
+            rows = [
+                [v or "" for v in row[:width]]
+                + [v if v != "" else None for v in row[width:]]
+                for row in dump
+            ]
+            execute_batch(
+                cur,
+                f"INSERT INTO {staging} VALUES ({placeholders})",
+                rows,
+                page_size=1000,
+            )
+            cur.execute(f"CREATE INDEX ON {staging} ({select_cols})")
+            # Without stats the planner assumes the staging table is tiny and
+            # picks a nested loop regardless of how the join is written.
+            cur.execute(f"ANALYZE {staging}")
+            cur.execute(
+                f"UPDATE {table} t SET latitude = s.latitude, "
+                "longitude = s.longitude, "
+                "geom_point = CASE WHEN s.latitude IS NOT NULL "
+                "AND s.longitude IS NOT NULL THEN ST_SetSRID("
+                "ST_MakePoint(s.longitude, s.latitude), 4326) END, "
+                "geocode_date = s.geocode_date, "
+                "geocode_system = s.geocode_system "
+                f"FROM {staging} s WHERE {join} AND t.latitude IS NULL"
+            )
+            carried = cur.rowcount
+            cur.execute(f"DROP TABLE IF EXISTS {staging}")
+        conn.commit()
+
+    log.info("%d rows inherited a coordinate", carried)
+    return carried

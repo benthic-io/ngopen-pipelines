@@ -37,34 +37,35 @@ EXPOSED = ("public.sam_registrations", "public.mv_contractor_registry")
 
 # The 142-field monthly extract. Only the fields the schema actually stores are
 # mapped; the positional indices are the contract with SAM.gov's layout and are
-# carried over verbatim from gov_to_pg.py.
+# carried over verbatim from gov_to_pg.py's SAM_FIELD_MAPPING.
+#
+# These indices are not guessable and must not be "tidied". Mailing address in
+# particular is not contiguous -- city 41, zip 42, country 44, state 45 -- and
+# naics_codes (31) precedes primary_naics (32) rather than following it.
 FIELD_MAP = {
     "uei": 0,
     "entity_id": 1,
-    "duns": 2,
-    "legal_business_name": 12,
-    "dba_name": 13,
-    "physical_address_line1": 14,
-    "physical_city": 16,
-    "physical_state": 17,
-    "physical_zip": 18,
-    "physical_country": 20,
-    "mailing_address_line1": 21,
-    "mailing_city": 23,
-    "mailing_state": 24,
-    "mailing_zip": 25,
-    "mailing_country": 27,
+    "duns": 3,
+    "legal_business_name": 11,
+    "dba_name": 12,
+    "physical_address_line1": 15,
+    "physical_city": 17,
+    "physical_state": 18,
+    "physical_zip": 19,
+    "physical_country": 21,
+    "mailing_address_line1": 39,
+    "mailing_city": 41,
+    "mailing_state": 45,
+    "mailing_zip": 42,
+    "mailing_country": 44,
+    "primary_naics": 32,
+    "naics_codes": 31,
+    "psc_codes": 34,
     "registration_expiration": 8,
     "last_update": 9,
-    "business_start_date": 10,
-    "corporate_url": 30,
-    "primary_naics": 31,
-    "naics_codes": 32,
-    "psc_codes": 33,
-    "entity_structure": 34,
-    "state_of_incorporation": 35,
-    "country_of_incorporation": 36,
-    "registration_status": 4,
+    "business_start_date": 24,
+    "corporate_url": 26,
+    "purpose_of_registration": 6,
 }
 
 INSERT_SQL = """
@@ -74,8 +75,7 @@ INSERT INTO public.sam_registrations (
     physical_country, mailing_address_line1, mailing_city, mailing_state,
     mailing_zip, mailing_country, registration_expiration, last_update,
     business_start_date, corporate_url, primary_naics, naics_codes,
-    psc_codes, entity_structure, state_of_incorporation,
-    country_of_incorporation, registration_status, source_file, is_current
+    psc_codes, purpose_of_registration, source_file, is_current
 ) VALUES (
     %(uei)s, %(entity_id)s, %(duns)s, %(legal_business_name)s, %(dba_name)s,
     %(physical_address_line1)s, %(physical_city)s, %(physical_state)s,
@@ -83,9 +83,8 @@ INSERT INTO public.sam_registrations (
     %(mailing_city)s, %(mailing_state)s, %(mailing_zip)s,
     %(mailing_country)s, %(registration_expiration)s, %(last_update)s,
     %(business_start_date)s, %(corporate_url)s, %(primary_naics)s,
-    %(naics_codes)s, %(psc_codes)s, %(entity_structure)s,
-    %(state_of_incorporation)s, %(country_of_incorporation)s,
-    %(registration_status)s, %(source_file)s, TRUE
+    %(naics_codes)s, %(psc_codes)s, %(purpose_of_registration)s,
+    %(source_file)s, TRUE
 )
 ON CONFLICT (uei, source_file) DO UPDATE SET
     legal_business_name = EXCLUDED.legal_business_name,
@@ -96,7 +95,7 @@ ON CONFLICT (uei, source_file) DO UPDATE SET
     physical_zip = EXCLUDED.physical_zip,
     registration_expiration = EXCLUDED.registration_expiration,
     last_update = EXCLUDED.last_update,
-    registration_status = EXCLUDED.registration_status
+    purpose_of_registration = EXCLUDED.purpose_of_registration
 """
 
 # Carry a previous geocode forward when the address has not moved, so a new
@@ -241,19 +240,46 @@ def verify(ctx: Context) -> Outcome:
 
     manifest = []
     for path in files:
+        # A monthly extract is wrapped in sentinel lines:
+        #
+        #   BOF PUBLIC V2 00000000 20260301 0874709 0008190
+        #   ...142 pipe-delimited fields per record...
+        #   EOF PUBLIC V2 00000000 20260301 0874709 0008190
+        #
+        # The sixth field of the header is SAM's own record count, which is
+        # the only integrity signal the format offers. Reading it here means a
+        # truncated download is caught before a partial load, rather than
+        # showing up later as a mysteriously short table.
+        declared = None
+        first = ""
         with path.open("r", encoding="utf-8", errors="replace") as fh:
-            first = fh.readline()
+            for line in fh:
+                if line.startswith("BOF "):
+                    parts = line.split()
+                    if len(parts) >= 6 and parts[5].isdigit():
+                        declared = int(parts[5])
+                    continue
+                if line.strip():
+                    first = line
+                    break
+
         fields = first.count("|") + 1 if "|" in first else 0
         if path.suffix.lower() == ".dat" and fields < 100:
             raise RuntimeError(
                 f"{path.name} has {fields} pipe-delimited fields, expected ~142; "
                 "the SAM.gov layout may have changed"
             )
-        manifest.append(
-            {"file": path.name, "bytes": path.stat().st_size, "fields": fields}
-        )
+
+        entry = {"file": path.name, "bytes": path.stat().st_size, "fields": fields}
+        if declared is not None:
+            entry["declared_records"] = declared
+        manifest.append(entry)
         ctx.log.info(
-            "%s: %d fields, %.1f MB", path.name, fields, path.stat().st_size / 1e6
+            "%s: %d fields, %.1f MB%s",
+            path.name,
+            fields,
+            path.stat().st_size / 1e6,
+            f", {declared} records declared" if declared is not None else "",
         )
 
     (ctx.state / "extracts.json").write_text(json.dumps(manifest, indent=2))
@@ -404,6 +430,21 @@ def geocode_stage(ctx: Context) -> Outcome:
         conn.commit()
     if carried:
         ctx.log.info("carried %d geocodes forward from the previous snapshot", carried)
+
+    # A candidate database built from scratch has no previous snapshot to carry
+    # from, so the copy-forward above finds nothing and every current
+    # registration looks unresolved. The serving database already holds those
+    # coordinates. Matching on the address rather than on a key means a row
+    # whose address moved is left for the geocoder, which is the point.
+    serving = ctx.cfg.dbname(DATASET)
+    if ctx.dbname != serving and db.database_exists(ctx.cfg, serving):
+        geocode.preserve(
+            ctx.cfg,
+            serving,
+            ctx.dbname,
+            "public.sam_registrations",
+            ("uei", "physical_address_line1", "physical_zip"),
+        )
 
     cursor = geocode.Cursor(ctx.state / "geocode.cursor")
     batch_size = int(ctx.cfg.get("geocoder.batch_size", 1000))
