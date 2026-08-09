@@ -1,16 +1,12 @@
--- ============================================================================
--- irs_ng: foreign keys and secondary indexes (stage 04_index)
+-- Constraints and secondary indexes on base relations.
 --
--- PROVENANCE: extracted from the live `irs_ng` database on 2026-08-08 with
---     pg_dump --schema-only --section=post-data --no-owner --no-privileges \
---             --no-comments -n public irs_ng
+-- Extracted from `pg_dump --section=post-data` against the live benthic.io
+-- database on 2026-08-08.  Primary keys and unique constraints are applied
+-- earlier, in 15_keys.sql, because the ingest INSERTs need their arbiter
+-- indexes to exist before the first ON CONFLICT fires.
 --
--- Made idempotent: CREATE INDEX -> CREATE INDEX IF NOT EXISTS; ADD CONSTRAINT
--- wrapped in an exception-swallowing DO block. Statements are otherwise
--- verbatim so the audit trail against the live catalog stays exact.
---
--- Primary keys and unique constraints live in 15_keys.sql (applied earlier).
--- ============================================================================
+-- Indexes whose target is a materialized view live in 25_derived_indexes.sql
+-- and are applied in 06_derive, after the views they index have been created.
 
 CREATE INDEX IF NOT EXISTS idx_527_ein ON public.political_orgs_527 USING btree (ein);
 
@@ -117,28 +113,6 @@ CREATE INDEX IF NOT EXISTS idx_census_geoid ON public.census_demographics USING 
 CREATE INDEX IF NOT EXISTS idx_census_geoid_year_type ON public.census_demographics USING btree (geoid, year, geo_type);
 
 CREATE INDEX IF NOT EXISTS idx_census_year ON public.census_demographics USING btree (year);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mfh_ein ON public.mv_org_financial_health USING btree (ein);
-
-CREATE INDEX IF NOT EXISTS idx_mfh_health ON public.mv_org_financial_health USING btree (financial_health);
-
-CREATE INDEX IF NOT EXISTS idx_mfh_revenue ON public.mv_org_financial_health USING btree (avg_revenue DESC);
-
-CREATE INDEX IF NOT EXISTS idx_mfh_years ON public.mv_org_financial_health USING btree (years_of_data);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_geom ON public.mv_nonprofit_profile USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_name_trgm ON public.mv_nonprofit_profile USING gin (org_name_current public.gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_ntee ON public.mv_nonprofit_profile USING btree (ntee_irs);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_revenue ON public.mv_nonprofit_profile USING btree (recent_revenue DESC);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_revoked ON public.mv_nonprofit_profile USING btree (revocation_date) WHERE (revocation_date IS NOT NULL);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_state ON public.mv_nonprofit_profile USING btree (f990_org_addr_state);
-
-CREATE INDEX IF NOT EXISTS idx_mnp_subsection ON public.mv_nonprofit_profile USING btree (bmf_subsection_code);
 
 CREATE INDEX IF NOT EXISTS idx_pf_ein ON public.form990_soi_private_foundation USING btree (ein);
 

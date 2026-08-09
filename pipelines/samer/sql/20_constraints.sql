@@ -1,40 +1,12 @@
--- ============================================================================
--- samer: foreign keys and secondary indexes (stage 04_index)
+-- Constraints and secondary indexes on base relations.
 --
--- PROVENANCE: extracted from the live `sam_er` database on 2026-08-08 with
---     pg_dump --schema-only --section=post-data --no-owner --no-privileges \
---             --no-comments -n public sam_er
+-- Extracted from `pg_dump --section=post-data` against the live benthic.io
+-- database on 2026-08-08.  Primary keys and unique constraints are applied
+-- earlier, in 15_keys.sql, because the ingest INSERTs need their arbiter
+-- indexes to exist before the first ON CONFLICT fires.
 --
--- Made idempotent: CREATE INDEX -> CREATE INDEX IF NOT EXISTS; ADD CONSTRAINT
--- wrapped in an exception-swallowing DO block. Statements are otherwise
--- verbatim so the audit trail against the live catalog stays exact.
---
--- Primary keys and unique constraints live in 15_keys.sql (applied earlier).
--- ============================================================================
-
-CREATE INDEX IF NOT EXISTS idx_mcr_duns ON public.mv_contractor_registry USING btree (duns);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_expiration ON public.mv_contractor_registry USING btree (registration_expiration);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_geom ON public.mv_contractor_registry USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_naics ON public.mv_contractor_registry USING btree (primary_naics);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_name_trgm ON public.mv_contractor_registry USING gin (legal_business_name public.gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_state ON public.mv_contractor_registry USING btree (physical_state);
-
-CREATE INDEX IF NOT EXISTS idx_mcr_status ON public.mv_contractor_registry USING btree (registration_status);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcr_uei ON public.mv_contractor_registry USING btree (uei);
-
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_geom ON public.mv_contractor_registry USING gist (geom_point) WHERE (geom_point IS NOT NULL);
-
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_state ON public.mv_contractor_registry USING btree (physical_state);
-
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_status ON public.mv_contractor_registry USING btree (registration_status);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_contractor_uei ON public.mv_contractor_registry USING btree (uei);
+-- Indexes whose target is a materialized view live in 25_derived_indexes.sql
+-- and are applied in 06_derive, after the views they index have been created.
 
 CREATE INDEX IF NOT EXISTS idx_sam_current ON public.sam_registrations USING btree (is_current);
 

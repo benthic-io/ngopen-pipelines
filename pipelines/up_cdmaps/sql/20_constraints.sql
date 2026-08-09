@@ -1,16 +1,12 @@
--- ============================================================================
--- up_cdmaps: foreign keys and secondary indexes (stage 04_index)
+-- Constraints and secondary indexes on base relations.
 --
--- PROVENANCE: extracted from the live `ucla_polysci_cdmaps` database on 2026-08-08 with
---     pg_dump --schema-only --section=post-data --no-owner --no-privileges \
---             --no-comments -n public ucla_polysci_cdmaps
+-- Extracted from `pg_dump --section=post-data` against the live benthic.io
+-- database on 2026-08-08.  Primary keys and unique constraints are applied
+-- earlier, in 15_keys.sql, because the ingest INSERTs need their arbiter
+-- indexes to exist before the first ON CONFLICT fires.
 --
--- Made idempotent: CREATE INDEX -> CREATE INDEX IF NOT EXISTS; ADD CONSTRAINT
--- wrapped in an exception-swallowing DO block. Statements are otherwise
--- verbatim so the audit trail against the live catalog stays exact.
---
--- Primary keys and unique constraints live in 15_keys.sql (applied earlier).
--- ============================================================================
+-- Indexes whose target is a materialized view live in 25_derived_indexes.sql
+-- and are applied in 06_derive, after the views they index have been created.
 
 CREATE INDEX IF NOT EXISTS idx_cd_congress ON public.congressional_districts USING btree (congress_number);
 

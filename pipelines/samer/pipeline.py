@@ -458,7 +458,13 @@ def derive(ctx: Context) -> Outcome:
     ctx.log.info("materialized views refreshed")
 
     # Indexes on these matviews were held back from 04_index because their
-    # targets did not exist yet.
+    # targets did not exist yet.  Two sources: the upstream-extracted set in
+    # sql/, and the recovered set for objects no ETL script ever created.
+    staged_idx = SQL_DIR / "25_derived_indexes.sql"
+    if staged_idx.exists():
+        ctx.log.info("applying indexes on derived objects")
+        db.psql_file(ctx.cfg, ctx.dbname, staged_idx)
+
     derived_idx = RECOVERED_DIR / "indexes_derived.sql"
     if derived_idx.exists():
         ctx.log.info("applying recovered indexes on derived objects")

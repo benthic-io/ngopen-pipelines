@@ -12,10 +12,12 @@ database name is written anywhere else in this codebase.
 
 from __future__ import annotations
 
+import re
 import subprocess
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import IO, Any, Iterable, Iterator, Sequence
 
 from .config import Config
 
@@ -218,6 +220,59 @@ def pg_restore_list(dump_dir: str | Path) -> list[str]:
     return proc.stdout.split("\n")
 
 
+def _rewrite_schema(
+    source: IO[bytes],
+    sink: IO[bytes],
+    from_schema: str,
+    to_schema: str,
+    table: str,
+) -> None:
+    """Redirect a pg_dump stream into a different schema.
+
+    pg_dump writes fully-qualified names, so ``SET search_path`` cannot move the
+    incoming copy aside; the statements say ``public.foo`` outright and collide
+    with the relation they are meant to replace. Rewriting the qualifier on the
+    way past is the only way to land a same-named relation beside the original.
+
+    Only the target relation and objects named after it are rewritten. A blanket
+    ``public.`` substitution also catches things that merely live in public and
+    must not move -- operator classes like ``public.gin_trgm_ops``, PostGIS
+    functions -- producing DDL that references a schema those objects were never
+    in. Anchoring on the table name keeps owned sequences and defaults together
+    with their table while leaving shared machinery alone.
+
+    COPY data blocks are passed through untouched. A row that happens to contain
+    the text ``public.`` is data, not a qualified name, and rewriting it would
+    silently corrupt the very bytes this transfer exists to preserve.
+    """
+    pattern = re.compile(
+        rb"\b"
+        + re.escape(from_schema.encode())
+        + rb"\.("
+        + re.escape(table.encode())
+        + rb"\w*)"
+    )
+    replacement = to_schema.encode() + rb".\1"
+    in_copy = False
+
+    for line in source:
+        if in_copy:
+            # Inside a COPY block; only the terminator is SQL.
+            if line.rstrip(b"\r\n") == b"\\.":
+                in_copy = False
+            sink.write(line)
+            continue
+
+        rewritten = pattern.sub(replacement, line)
+        sink.write(rewritten)
+
+        stripped = rewritten.lstrip()
+        if stripped.startswith(b"COPY ") and rewritten.rstrip(b"\r\n").endswith(
+            b"FROM stdin;"
+        ):
+            in_copy = True
+
+
 def transfer_relation(
     cfg: Config,
     source_db: str,
@@ -264,39 +319,47 @@ def transfer_relation(
         "--no-privileges",
         "--no-comments",
     ]
-    # Rewrite the qualified name on the way through so the incoming copy lands
-    # beside the relation it will replace rather than colliding with it.
     load = [
         "psql",
         *_base_args(cfg, target_db),
         "-v",
         "ON_ERROR_STOP=1",
         "-q",
-        "-c",
-        f"SET search_path TO {quote_ident(target_schema)}",
         "-f",
         "-",
     ]
 
-    producer = subprocess.Popen(dump, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert producer.stdout is not None
-    consumer = subprocess.Popen(
-        load, stdin=producer.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
-    producer.stdout.close()
-    _, load_err = consumer.communicate()
-    producer.wait()
-    _, dump_err = producer.communicate()
+    with tempfile.TemporaryFile() as dump_log, tempfile.TemporaryFile() as load_log:
+        producer = subprocess.Popen(dump, stdout=subprocess.PIPE, stderr=dump_log)
+        assert producer.stdout is not None
+        consumer = subprocess.Popen(
+            load, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=load_log
+        )
+        assert consumer.stdin is not None
+
+        try:
+            _rewrite_schema(
+                producer.stdout, consumer.stdin, schema, target_schema, table
+            )
+        finally:
+            consumer.stdin.close()
+            producer.stdout.close()
+
+        consumer.wait()
+        producer.wait()
+
+        dump_log.seek(0)
+        load_log.seek(0)
+        dump_err = dump_log.read().decode(errors="replace").strip()
+        load_err = load_log.read().decode(errors="replace").strip()
 
     if producer.returncode != 0:
         raise DatabaseError(
-            f"pg_dump of {relation} from {source_db} failed: "
-            f"{dump_err.decode(errors='replace').strip()}"
+            f"pg_dump of {relation} from {source_db} failed: {dump_err}"
         )
     if consumer.returncode != 0:
         raise DatabaseError(
-            f"loading {relation} into {target_db}.{target_schema} failed: "
-            f"{load_err.decode(errors='replace').strip()}"
+            f"loading {relation} into {target_db}.{target_schema} failed: {load_err}"
         )
     return consumer.returncode
 

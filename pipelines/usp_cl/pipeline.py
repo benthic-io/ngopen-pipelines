@@ -108,10 +108,24 @@ def _load_yaml(path: Path) -> Any:
 
 
 def _first(value: Any) -> Any:
-    """YAML gives lists for some identifier fields; keep them as JSON text."""
+    """Normalise a YAML scalar-or-list field for a Postgres array column.
+
+    legislators.fec_ids and .bioguide_previous are text[]; committees.congresses
+    and subcommittees.congresses are integer[]. psycopg2 adapts a Python list to
+    an array literal directly, so the list is passed through untouched. JSON
+    encoding it would produce '["F000246"]', which Postgres rejects because a
+    bracketed array literal must declare explicit dimensions.
+
+    A scalar is wrapped so a column that is sometimes scalar and sometimes a
+    list in the upstream YAML still lands as a one-element array. Empty and
+    missing both become NULL rather than an empty array, matching the live
+    serving database.
+    """
+    if value is None:
+        return None
     if isinstance(value, list):
-        return json.dumps(value) if value else None
-    return value
+        return value or None
+    return [value]
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -794,7 +808,13 @@ def derive(ctx: Context) -> Outcome:
         )
 
     # Indexes on these matviews were held back from 04_index because their
-    # targets did not exist yet.
+    # targets did not exist yet.  Two sources: the upstream-extracted set in
+    # sql/, and the recovered set for objects no ETL script ever created.
+    staged_idx = SQL_DIR / "25_derived_indexes.sql"
+    if staged_idx.exists():
+        ctx.log.info("applying indexes on derived objects")
+        db.psql_file(ctx.cfg, ctx.dbname, staged_idx)
+
     derived_idx = RECOVERED_DIR / "indexes_derived.sql"
     if derived_idx.exists():
         ctx.log.info("applying recovered indexes on derived objects")

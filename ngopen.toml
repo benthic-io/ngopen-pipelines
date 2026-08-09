@@ -69,8 +69,8 @@ base_url = "https://benthic.io/ngopen"
 usaspending = 3000
 samer       = 3001
 irs_ng      = 3002
-usp_cl      = 3003
-up_cdmaps   = 3004
+usp_cl      = 3004
+up_cdmaps   = 3003
 
 [bdp]
 author_identity = "brian@benthic.io"

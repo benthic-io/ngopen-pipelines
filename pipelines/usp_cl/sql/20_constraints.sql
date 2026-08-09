@@ -1,16 +1,12 @@
--- ============================================================================
--- usp_cl: foreign keys and secondary indexes (stage 04_index)
+-- Constraints and secondary indexes on base relations.
 --
--- PROVENANCE: extracted from the live `us_project_cl` database on 2026-08-08 with
---     pg_dump --schema-only --section=post-data --no-owner --no-privileges \
---             --no-comments -n public us_project_cl
+-- Extracted from `pg_dump --section=post-data` against the live benthic.io
+-- database on 2026-08-08.  Primary keys and unique constraints are applied
+-- earlier, in 15_keys.sql, because the ingest INSERTs need their arbiter
+-- indexes to exist before the first ON CONFLICT fires.
 --
--- Made idempotent: CREATE INDEX -> CREATE INDEX IF NOT EXISTS; ADD CONSTRAINT
--- wrapped in an exception-swallowing DO block. Statements are otherwise
--- verbatim so the audit trail against the live catalog stays exact.
---
--- Primary keys and unique constraints live in 15_keys.sql (applied earlier).
--- ============================================================================
+-- Indexes whose target is a materialized view live in 25_derived_indexes.sql
+-- and are applied in 06_derive, after the views they index have been created.
 
 CREATE INDEX IF NOT EXISTS idx_cm_bioguide_id ON public.committee_membership USING btree (bioguide_id);
 
@@ -85,30 +81,6 @@ CREATE INDEX IF NOT EXISTS idx_lt_state_district_term ON public.legislator_terms
 CREATE INDEX IF NOT EXISTS idx_lt_term_end ON public.legislator_terms USING btree (term_end);
 
 CREATE INDEX IF NOT EXISTS idx_lt_term_type ON public.legislator_terms USING btree (term_type);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcl_bioguide ON public.mv_current_lawmakers USING btree (bioguide_id);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_district ON public.mv_current_lawmakers USING btree (state, district);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_name_trgm ON public.mv_current_lawmakers USING gin (official_full public.gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_party ON public.mv_current_lawmakers USING btree (party);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_state ON public.mv_current_lawmakers USING btree (state);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_term_end ON public.mv_current_lawmakers USING btree (term_end);
-
-CREATE INDEX IF NOT EXISTS idx_mcl_term_type ON public.mv_current_lawmakers USING btree (term_type);
-
-CREATE INDEX IF NOT EXISTS idx_mcp_bioguide ON public.mv_committee_power USING btree (bioguide_id);
-
-CREATE INDEX IF NOT EXISTS idx_mcp_party ON public.mv_committee_power USING btree (party);
-
-CREATE INDEX IF NOT EXISTS idx_mcp_state_dist ON public.mv_committee_power USING btree (state, district);
-
-CREATE INDEX IF NOT EXISTS idx_mcp_thomas ON public.mv_committee_power USING btree (thomas_id);
-
-CREATE INDEX IF NOT EXISTS idx_mcp_title ON public.mv_committee_power USING btree (title);
 
 CREATE INDEX IF NOT EXISTS idx_membership_bioguide ON public.committee_membership USING btree (bioguide_id);
 

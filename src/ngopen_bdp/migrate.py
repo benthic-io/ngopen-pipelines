@@ -306,6 +306,187 @@ def verify(
     return result.structurally_clean, result
 
 
+def _rename_dependents(schema: str, target: str, suffix: str) -> str:
+    """Rename a relation's indexes, constraints, and owned sequences.
+
+    ``ALTER TABLE ... RENAME`` renames only the relation. Its indexes,
+    constraints, and owned sequences keep their original names, so the
+    incoming copy -- which carries identically named ones -- collides on
+    ``SET SCHEMA``. Renaming them out of the way first is what makes the
+    cutover possible.
+
+    Emitted as a catalogue-driven DO block rather than generated statements
+    so it stays correct for any relation without a round trip to discover
+    what exists.
+    """
+    return f"""
+DO $$
+DECLARE
+    r record;
+    ref regclass := '{schema}.{target}'::regclass;
+    suffix text := '{suffix}';
+BEGIN
+    FOR r IN SELECT conname FROM pg_constraint WHERE conrelid = ref
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+            ref, r.conname, left(r.conname, 63 - length(suffix)) || suffix
+        );
+    END LOOP;
+
+    FOR r IN
+        SELECT c.relname
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = ref
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint x WHERE x.conindid = i.indexrelid
+          )
+    LOOP
+        EXECUTE format(
+            'ALTER INDEX {schema}.%I RENAME TO %I',
+            r.relname, left(r.relname, 63 - length(suffix)) || suffix
+        );
+    END LOOP;
+
+    FOR r IN
+        SELECT s.relname
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid
+        WHERE s.relkind = 'S' AND d.refobjid = ref AND d.deptype = 'a'
+    LOOP
+        EXECUTE format(
+            'ALTER SEQUENCE {schema}.%I RENAME TO %I',
+            r.relname, left(r.relname, 63 - length(suffix)) || suffix
+        );
+    END LOOP;
+END $$;
+"""
+
+
+def _strip_suffix(schema: str, target: str, suffix: str) -> str:
+    """Undo :func:`_rename_dependents` so a rolled-back relation looks untouched."""
+    return f"""
+DO $$
+DECLARE
+    r record;
+    ref regclass := '{schema}.{target}'::regclass;
+    suffix text := '{suffix}';
+BEGIN
+    FOR r IN
+        SELECT conname FROM pg_constraint
+        WHERE conrelid = ref AND conname LIKE '%' || suffix
+    LOOP
+        EXECUTE format(
+            'ALTER TABLE %s RENAME CONSTRAINT %I TO %I',
+            ref, r.conname, left(r.conname, length(r.conname) - length(suffix))
+        );
+    END LOOP;
+
+    FOR r IN
+        SELECT c.relname
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        WHERE i.indrelid = ref
+          AND c.relname LIKE '%' || suffix
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_constraint x WHERE x.conindid = i.indexrelid
+          )
+    LOOP
+        EXECUTE format(
+            'ALTER INDEX {schema}.%I RENAME TO %I',
+            r.relname, left(r.relname, length(r.relname) - length(suffix))
+        );
+    END LOOP;
+
+    FOR r IN
+        SELECT s.relname
+        FROM pg_class s
+        JOIN pg_depend d ON d.objid = s.oid
+        WHERE s.relkind = 'S' AND d.refobjid = ref AND d.deptype = 'a'
+          AND s.relname LIKE '%' || suffix
+    LOOP
+        EXECUTE format(
+            'ALTER SEQUENCE {schema}.%I RENAME TO %I',
+            r.relname, left(r.relname, length(r.relname) - length(suffix))
+        );
+    END LOOP;
+END $$;
+"""
+
+
+def _move_owned_sequences(from_schema: str, to_schema: str, target: str) -> str:
+    """Follow a relation's owned sequences into its new schema.
+
+    ``SET SCHEMA`` moves the relation but leaves its sequences behind, which
+    would leave the column default pointing across a schema boundary at a
+    staging area that later gets dropped.
+
+    The relation is looked up in either schema because this runs after the move
+    on the way in and before it on the way out; ``to_regclass`` returns NULL
+    rather than raising when a name does not resolve, so the two lookups can be
+    tried in order without a failure in between.
+    """
+    return f"""
+DO $$
+DECLARE
+    r record;
+    ref regclass := COALESCE(
+        to_regclass('{to_schema}.{target}'),
+        to_regclass('{from_schema}.{target}')
+    );
+BEGIN
+    IF ref IS NULL THEN
+        RETURN;
+    END IF;
+    FOR r IN
+        SELECT s.relname
+        FROM pg_class s
+        JOIN pg_namespace n ON n.oid = s.relnamespace
+        JOIN pg_depend d ON d.objid = s.oid
+        WHERE s.relkind = 'S'
+          AND n.nspname = '{from_schema}'
+          AND d.refobjid = ref
+          AND d.deptype = 'a'
+    LOOP
+        EXECUTE format(
+            'ALTER SEQUENCE {from_schema}.%I SET SCHEMA {to_schema}', r.relname
+        );
+    END LOOP;
+END $$;
+"""
+
+
+def _copy_grants(schema: str, target: str, legacy: str) -> str:
+    """Carry the legacy relation's grants onto its replacement.
+
+    ``pg_dump --no-privileges`` deliberately omits grants, so a transferred
+    relation arrives owned by the superuser and readable by nobody else. Swapping
+    it in without this step revokes the endpoint: PostgREST keeps serving, but
+    every request returns ``permission denied for table``. Reading the grants off
+    the relation being retired rather than from configuration means the
+    replacement inherits exactly what was there, including any grant made by hand
+    over the years that no pipeline knows about.
+    """
+    return f"""
+DO $$
+DECLARE r record;
+BEGIN
+    FOR r IN
+        SELECT grantee, privilege_type
+        FROM information_schema.role_table_grants
+        WHERE table_schema = '{schema}'
+          AND table_name = '{legacy}'
+          AND grantee <> current_user
+    LOOP
+        EXECUTE format(
+            'GRANT %s ON {schema}.{target} TO %I', r.privilege_type, r.grantee
+        );
+    END LOOP;
+END $$;
+"""
+
+
 def swap(
     cfg: Config,
     dataset: str,
@@ -340,9 +521,12 @@ def swap(
     # unresolvable.
     sql = (
         "BEGIN;\n"
-        f"ALTER {alter} IF EXISTS {schema}.{name} RENAME TO {legacy};\n"
-        f"ALTER {alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n"
-        "COMMIT;"
+        + _rename_dependents(schema, name, LEGACY_SUFFIX)
+        + f"ALTER {alter} IF EXISTS {schema}.{name} RENAME TO {legacy};\n"
+        + f"ALTER {alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n"
+        + _move_owned_sequences(STAGING_SCHEMA, schema, name)
+        + _copy_grants(schema, name, legacy)
+        + "COMMIT;"
     )
     db.psql(cfg, serving, sql, tuples_only=False)
 
@@ -380,11 +564,16 @@ def rollback(
     alter = _ALTER.get(kind, "TABLE")
     legacy = f"{name}{LEGACY_SUFFIX}"
 
+    # Exact reverse of the swap: move the candidate back to staging with its
+    # sequences, restore the legacy name, then strip the suffix off the
+    # dependents so the relation is indistinguishable from its pre-swap self.
     sql = (
         "BEGIN;\n"
-        f"ALTER {alter} {schema}.{name} SET SCHEMA {STAGING_SCHEMA};\n"
-        f"ALTER {alter} {schema}.{legacy} RENAME TO {name};\n"
-        "COMMIT;"
+        + _move_owned_sequences(schema, STAGING_SCHEMA, name)
+        + f"ALTER {alter} {schema}.{name} SET SCHEMA {STAGING_SCHEMA};\n"
+        + f"ALTER {alter} {schema}.{legacy} RENAME TO {name};\n"
+        + _strip_suffix(schema, name, LEGACY_SUFFIX)
+        + "COMMIT;"
     )
     db.psql(cfg, serving, sql, tuples_only=False)
 
