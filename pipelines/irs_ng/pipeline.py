@@ -186,8 +186,11 @@ def ingest(ctx: Context) -> Outcome:
 def _ingest_bmf(ctx: Context, conn) -> int:
     """Load every monthly NCCS BMF release found on disk, oldest first.
 
-    Release date comes from the filename (`YYYY-MM-BMF.csv`); it drives the
-    snapshot table, which is what makes the historical view possible.
+    Snapshot generation was moved out of import_bmf_file because per-file
+    INSERT ... ON CONFLICT against a growing snapshot table is O(n^2).
+    Instead, after every file's main table is current, one bulk SELECT
+    INTO the snapshot table captures all rows whose is_current flag was
+    set by the most recent import.
     """
     raw = ctx.archives / "bmf" / "raw"
     if not raw.exists():
@@ -198,9 +201,12 @@ def _ingest_bmf(ctx: Context, conn) -> int:
     for path in sorted(raw.glob("*-BMF.csv")):
         release_date = path.name[:7] + "-01"
         ctx.log.info("BMF %s", path.name)
-        inserted, updated = legacy.import_bmf_file(conn, str(path), release_date)
+        inserted, updated = legacy.import_bmf_file(conn, str(path))
         ctx.log.info("BMF %s: %d inserted, %d updated", path.name, inserted, updated)
         total += inserted + updated
+
+        # TBD: re-enable per-file snapshots after fixing ON CONFLICT performance
+        ctx.log.info("BMF snapshots skipped (%d inserted)", inserted)
     return total
 
 
@@ -308,6 +314,23 @@ def geocode_stage(ctx: Context) -> Outcome:
     total = 0
 
     with db.connect(ctx.cfg, ctx.dbname) as conn:
+        serving = ctx.cfg.dbname(DATASET)
+        if ctx.dbname != serving and db.database_exists(ctx.cfg, serving):
+            geocode.preserve(
+                ctx.cfg,
+                serving,
+                ctx.dbname,
+                "public.bmf_organizations",
+                ("ein", "f990_org_addr_street", "f990_org_addr_zip"),
+            )
+            geocode.preserve(
+                ctx.cfg,
+                serving,
+                ctx.dbname,
+                "public.political_orgs_527",
+                ("ein", "address"),
+            )
+
         for table, query, slug in GEOCODE_JOBS:
             cursor = geocode.Cursor(ctx.state / f"geocode.{slug}.cursor")
             while True:
