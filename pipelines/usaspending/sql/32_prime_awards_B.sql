@@ -12,7 +12,7 @@ CREATE MATERIALIZED VIEW public.prime_awards AS
 WITH distinct_awards AS (
     SELECT
         award_id,
-        MAX(recipient_hash)    AS recipient_hash,
+        MAX(recipient_hash::text)::uuid AS recipient_hash,
         MAX(recipient_uei)     AS recipient_uei,
         MAX(recipient_name)    AS recipient_name,
         MAX(piid)              AS piid,
