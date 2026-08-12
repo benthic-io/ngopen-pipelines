@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -464,4 +465,111 @@ def preserve(
         conn.commit()
 
     log.info("%d rows inherited a coordinate", carried)
+    return carried
+
+
+def preserve_index(
+    cfg: Config,
+    source_db: str,
+    target_db: str,
+    index_table: str,
+    lookup_table: str,
+    match_columns: Sequence[str],
+) -> int:
+    """Carry geocodes into a side geocode index from a previously built DB.
+
+    ``preserve`` updates geocode columns in place on the source table; this is
+    the counterpart for pipelines that store coordinates in a *separate index
+    table* keyed by a surrogate ``source_id`` (the USAspending pattern, where
+    ``recipient_geocode_index.source_id`` points at ``recipient_lookup.id``).
+
+    The source build's geocode index already answered the geocoder for every
+    address. Exact-address matches can inherit that answer instead of asking
+    again, and the integrity properties are the same as ``preserve``:
+
+      * match on the address columns themselves, never on a surrogate key;
+      * carry only rows with a coordinate (``latitude IS NOT NULL``), so
+        ``photon_failed`` / ``no_address`` outcomes are never inherited and
+        are instead re-attempted by the caller;
+      * keep the original ``geocode_date`` and ``geocode_system`` so the
+        carried row's provenance records when it was actually geocoded.
+
+    Only rows whose address is byte-for-byte equal (with NULLs normalised to
+    ``''`` on both sides) are carried; anything that changed is geocoded fresh.
+
+    Returns the number of coordinates carried into the target index.
+    """
+    _check_ident(index_table, "geocode index table")
+    _check_ident(lookup_table, "lookup table")
+    for column in match_columns:
+        _check_ident(column, "match column")
+
+    log = get("geocode")
+    select_cols = ", ".join(f"rl.{c}" for c in match_columns)
+    dump_cols = ", ".join(match_columns)
+    staging = "_bdp_geocode_index_carry"
+    col_defs = ", ".join(f"{c} TEXT" for c in match_columns)
+
+    # The source index only knows surrogate ids, so the address columns are
+    # recovered through the source's own lookup table before matching. The
+    # transfer is streamed with COPY through a temp file: 16M rows must never
+    # be materialised in this process.
+    dump_sql = (
+        f"SELECT {select_cols}, g.latitude, g.longitude, "
+        "g.geocode_date, g.geocode_system "
+        f"FROM {lookup_table} rl "
+        f"JOIN {index_table} g ON g.source_id = rl.id "
+        "WHERE g.latitude IS NOT NULL"
+    )
+
+    with tempfile.NamedTemporaryFile(mode="w+b", suffix=".csv") as tmp:
+        with db.connect(cfg, source_db, autocommit=True) as src:
+            with src.cursor() as cur:
+                cur.copy_expert(
+                    f"COPY ({dump_sql}) TO STDOUT WITH (FORMAT csv, HEADER false)",
+                    tmp,
+                )
+
+        with db.connect(cfg, target_db) as dst:
+            with dst.cursor() as cur:
+                cur.execute(f"DROP TABLE IF EXISTS {staging}")
+                cur.execute(
+                    f"CREATE UNLOGGED TABLE {staging} ({col_defs}, "
+                    "latitude NUMERIC(10,8), longitude NUMERIC(11,8), "
+                    "geocode_date TIMESTAMPTZ, geocode_system VARCHAR(50))"
+                )
+            tmp.seek(0)
+            with dst.cursor() as cur:
+                cur.copy_expert(
+                    f"COPY {staging} "
+                    f"({dump_cols}, latitude, longitude, geocode_date, "
+                    "geocode_system) "
+                    "FROM STDIN WITH (FORMAT csv, HEADER false)",
+                    tmp,
+                )
+            with dst.cursor() as cur:
+                cur.execute(f"CREATE INDEX ON {staging} ({dump_cols})")
+                cur.execute(f"ANALYZE {staging}")
+
+                # Resolve the target's own source_id via its lookup table, and
+                # only add rows whose address matched exactly and which are not
+                # already present. geom_point is filled by the INSERT trigger.
+                join = " AND ".join(
+                    f"COALESCE(rl.{c}::text, '') = COALESCE(s.{c}, '')"
+                    for c in match_columns
+                )
+                cur.execute(
+                    f"INSERT INTO {index_table} "
+                    "(source_id, latitude, longitude, geom_point, "
+                    "geocode_date, geocode_system) "
+                    f"SELECT rl.id, s.latitude, s.longitude, NULL, "
+                    "s.geocode_date, s.geocode_system "
+                    f"FROM {lookup_table} rl "
+                    f"JOIN {staging} s ON {join} "
+                    f"ON CONFLICT (source_id) DO NOTHING"
+                )
+                carried = cur.rowcount
+                cur.execute(f"DROP TABLE IF EXISTS {staging}")
+
+    log.info("%d rows inherited a coordinate into %s", carried, index_table)
     return carried

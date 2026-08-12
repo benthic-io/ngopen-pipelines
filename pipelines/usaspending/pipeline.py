@@ -266,6 +266,37 @@ def geocode_stage(ctx: Context) -> Outcome:
         ctx.log.info("dry-run: would geocode rpt.recipient_lookup")
         return Outcome.COMPLETED
 
+    serving = ctx.cfg.dbname(DATASET)
+    already = db.scalar(
+        ctx.cfg,
+        ctx.dbname,
+        "SELECT count(*) FROM public.recipient_geocode_index",
+    )
+    if (
+        ctx.dbname != serving
+        and db.database_exists(ctx.cfg, serving)
+        and int(already or 0) == 0
+    ):
+        carried = geocode.preserve_index(
+            ctx.cfg,
+            serving,
+            ctx.dbname,
+            "public.recipient_geocode_index",
+            "rpt.recipient_lookup",
+            ("address_line_1", "city", "state", "zip5", "country_code"),
+        )
+        ctx.log.info(
+            "carried %d exact-match geocodes from %s before fresh geocoding",
+            carried,
+            serving,
+        )
+        ctx.shared["timer"].note(carried_geocodes=carried, carried_from=serving)
+    else:
+        ctx.log.info(
+            "skip geocode carry from %s (index already populated or no source)",
+            serving,
+        )
+
     cursor = geocode.Cursor(ctx.state / "geocode.cursor")
     batch = int(ctx.cfg.get("geocoder.batch_size", 1000))
     budget = ctx.limit

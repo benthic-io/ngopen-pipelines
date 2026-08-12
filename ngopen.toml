@@ -54,7 +54,7 @@ statement_timeout                = "0"
 [geocoder]
 provider        = "photon"
 endpoints       = ["http://192.168.10.163:2322"]
-concurrency     = 50
+concurrency     = 25
 batch_size      = 1000
 timeout_seconds = 10
 retry_max       = 3
