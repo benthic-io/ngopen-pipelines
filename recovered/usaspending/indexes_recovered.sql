@@ -34,6 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_fa_title_trgm ON public.federal_account USING gin
 
 -- public.financial_accounts_by_awards
 CREATE INDEX IF NOT EXISTS idx_fabaward_disaster_emergency ON public.financial_accounts_by_awards USING btree (disaster_emergency_fund_code);
+CREATE INDEX IF NOT EXISTS idx_fabaward_distinct_award_key ON public.financial_accounts_by_awards USING btree (distinct_award_key);
 CREATE INDEX IF NOT EXISTS idx_fabaward_fain ON public.financial_accounts_by_awards USING btree (fain);
 CREATE INDEX IF NOT EXISTS idx_fabaward_obligations ON public.financial_accounts_by_awards USING btree (obligations_incurred_total_by_award_cpe);
 CREATE INDEX IF NOT EXISTS idx_fabaward_piid ON public.financial_accounts_by_awards USING btree (piid);
@@ -68,6 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_psc_desc_trgm ON public.psc USING gin (descriptio
 
 -- public.recipient_geocode_index
 CREATE INDEX IF NOT EXISTS idx_geocode_geom_point ON public.recipient_geocode_index USING gist (geom_point);
+CREATE INDEX IF NOT EXISTS idx_rgi_geom_point ON public.recipient_geocode_index USING gist (geom_point) WHERE (geom_point IS NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_recipient_geocode_source ON public.recipient_geocode_index USING btree (source_id);
 CREATE INDEX IF NOT EXISTS idx_rgi_source_id ON public.recipient_geocode_index USING btree (source_id);
 

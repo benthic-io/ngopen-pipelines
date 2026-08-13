@@ -24,7 +24,7 @@ WITH distinct_awards AS (
         MAX(type)              AS award_type,
         MIN(action_date)             AS action_date,
         MAX(fiscal_year)             AS fiscal_year,
-        SUM(federal_action_obligation) AS total_obligation,
+        SUM(federal_action_obligation)::numeric(23,2) AS total_obligation,
         BOOL_OR(is_fpds)             AS is_fpds
     FROM rpt.transaction_search
     GROUP BY award_id
@@ -58,11 +58,11 @@ SELECT
     as_.period_of_performance_start_date,
     as_.period_of_performance_current_end_date,
     as_.ordering_period_end_date,
-    as_.last_modified_date,
+    as_.last_modified_date::date AS last_modified_date,
     as_.certified_date,
     as_.create_date,
     as_.update_date,
-    as_.recipient_hash                          AS recipient_hash_as,
+    as_.recipient_hash,
     COALESCE(as_.recipient_name,
              da.recipient_name)                 AS recipient_name,
     as_.recipient_unique_id                     AS recipient_duns,
