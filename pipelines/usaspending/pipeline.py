@@ -51,6 +51,14 @@ EXPOSED = (
     "public.uei_crosswalk",
 )
 
+# Recovered materialized views declared WITH NO DATA in recovered/*.sql; the
+# derive stage creates them and populates them here, mirroring irs_ng.
+MATVIEWS = (
+    "public.mv_entity_spending_summary",
+    "public.mv_district_spending",
+    "public.mv_covid_spending",
+)
+
 
 def _archive_name(ctx: Context) -> str:
     return f"{DATASET}-{ctx.variant}.zip"
@@ -356,6 +364,12 @@ def derive(ctx: Context) -> Outcome:
             continue
         ctx.log.info("building %s", path.name)
         db.psql_file(ctx.cfg, ctx.dbname, path)
+
+    # Recovered matviews are declared WITH NO DATA so the DDL stays cheap and
+    # rerunnable; populating them is this stage's job.
+    for matview in MATVIEWS:
+        ctx.log.info("refreshing %s", matview)
+        db.psql(ctx.cfg, ctx.dbname, f"REFRESH MATERIALIZED VIEW {matview};")
 
     # Indexes on these matviews were held back from 04_index because their
     # targets did not exist yet.
