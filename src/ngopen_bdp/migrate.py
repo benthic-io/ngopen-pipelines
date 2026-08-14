@@ -816,6 +816,21 @@ def reclaim(
     for state in targets:
         alter = _ALTER.get(state.relkind or "r", "TABLE")
 
+        # A prior partial reclaim may have already dropped this legacy copy
+        # (a CASCADE can carry a relation the loop has not reached yet).
+        # to_regclass returns NULL instead of raising, so already-gone
+        # relations are simply marked reclaimed.
+        gone = db.scalar(
+            cfg,
+            serving,
+            f"SELECT to_regclass({db.quote_literal(state.legacy_name or '')}) IS NULL",
+        )
+        if gone == "t":
+            logger.info("%s already gone; marking reclaimed", state.legacy_name)
+            set_state(cfg, serving, dataset, state.relation, "reclaimed")
+            dropped.append((state.relation, state.legacy_name or ""))
+            continue
+
         # CASCADE is necessary -- a retired relation still owns its constraints
         # and sequences -- but it must not reach anything currently serving.
         collateral = db.psql(
@@ -827,9 +842,9 @@ def reclaim(
             JOIN pg_rewrite w ON w.oid = d.objid
             JOIN pg_class dc ON dc.oid = w.ev_class
             JOIN pg_namespace dn ON dn.oid = dc.relnamespace
-            WHERE d.refobjid = '{state.legacy_name}'::regclass
+            WHERE d.refobjid = {db.quote_literal(state.legacy_name or "")}::regclass
               AND dc.relname NOT LIKE '%{LEGACY_SUFFIX}'
-              AND dc.oid <> '{state.legacy_name}'::regclass
+              AND dc.oid <> {db.quote_literal(state.legacy_name or "")}::regclass
             """,
         )
         blocking = [row[0] for row in collateral if row and row[0]]
