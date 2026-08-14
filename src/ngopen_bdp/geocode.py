@@ -38,6 +38,7 @@ from typing import Any, Iterable, Sequence
 from psycopg2.extras import execute_batch
 
 from . import db
+from .db import DatabaseError
 from .config import Config
 from .log import get
 
@@ -285,6 +286,32 @@ def _check_ident(value: str, what: str) -> str:
     return value
 
 
+def _geocode_system_column(cfg: Config, dbname: str, table: str) -> str:
+    """Return the geocode-system column name present on the source table.
+
+    The current contract is ``geocode_system``; builds created before the
+    rename (irs_ng's original ``geocoding_source``) carry the old name. A
+    source database from either era should be carryable.
+    """
+    _check_ident(table, "table")
+    rows = db.psql(
+        cfg,
+        dbname,
+        "SELECT column_name FROM information_schema.columns "
+        f"WHERE table_schema = {db.quote_literal(table.split('.')[0])} "
+        f"AND table_name = {db.quote_literal(table.split('.')[-1])} "
+        "AND column_name IN ('geocode_system', 'geocoding_source')",
+    )
+    names = [r[0] for r in rows if r and r[0]]
+    if "geocode_system" in names:
+        return "geocode_system"
+    if "geocoding_source" in names:
+        return "geocoding_source"
+    raise DatabaseError(
+        f"{table} in {dbname} has neither geocode_system nor geocoding_source"
+    )
+
+
 def write_results(
     conn: Any,
     table: str,
@@ -408,11 +435,14 @@ def preserve(
     select_cols = ", ".join(match_columns)
 
     # The two databases cannot see each other, so the coordinates travel
-    # through this process. Only geocoded rows are worth carrying.
+    # through this process. Only geocoded rows are worth carrying. The source
+    # build may predate the uniform ``geocode_system`` column (irs_ng used
+    # ``geocoding_source``), so resolve the actual name on the source side.
+    system_col = _geocode_system_column(cfg, source_db, table)
     dump = db.psql(
         cfg,
         source_db,
-        f"SELECT {select_cols}, latitude, longitude, geocode_date, geocode_system "
+        f"SELECT {select_cols}, latitude, longitude, geocode_date, {system_col} "
         f"FROM {table} WHERE latitude IS NOT NULL",
     )
     if not dump:
