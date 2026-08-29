@@ -182,6 +182,26 @@ def restore(ctx: Context) -> Outcome:
     db.create_database(ctx.cfg, ctx.dbname, owner=ctx.cfg.role("restore_owner"))
     db.apply_session_tuning(ctx.cfg, ctx.dbname)
 
+    # Phase 2 runs REFRESH MATERIALIZED VIEW as etl_user, but the archive
+    # owns public.* as root and rpt.* is owned root/etl_user without
+    # granting USAGE/SELECT to etl_user. Grant so the refresh can read
+    # public.agency etc. and rpt.award_search without failing after a week.
+    ctx.log.info("granting etl_user SELECT/USAGE for matview refresh")
+    db.psql(
+        ctx.cfg,
+        ctx.dbname,
+        """
+        GRANT USAGE ON SCHEMA public, rpt, raw, int TO etl_user;
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO etl_user;
+        GRANT SELECT ON ALL TABLES IN SCHEMA rpt TO etl_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO etl_user;
+        ALTER DEFAULT PRIVILEGES IN SCHEMA rpt GRANT SELECT ON TABLES TO etl_user;
+        ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA public GRANT SELECT ON TABLES TO etl_user;
+        ALTER DEFAULT PRIVILEGES FOR ROLE root IN SCHEMA rpt GRANT SELECT ON TABLES TO etl_user;
+        """,
+        tuples_only=False,
+    )
+
     # --clean --if-exists makes the stage re-entrant. pg_restore otherwise dies
     # on CREATE SCHEMA the moment a previous attempt got far enough to create
     # anything, and a crash mid-restore is exactly the case this pipeline is

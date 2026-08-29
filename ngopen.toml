@@ -46,7 +46,7 @@ anon_role     = "web_anon"
 # publisher's own cluster; the restore aborts if they are absent. Created
 # NOLOGIN -- they are ownership placeholders, not accounts.
 archive_roles                    = ["root", "etl_user"]
-jobs                             = 16
+jobs                             = 6
 maintenance_work_mem             = "8GB"
 max_parallel_maintenance_workers = 8
 statement_timeout                = "0"
