@@ -378,12 +378,29 @@ def derive(ctx: Context) -> Outcome:
         RECOVERED_DIR / "mv_district_spending.sql",
         RECOVERED_DIR / "mv_covid_spending.sql",
     ]
+    # Path B (32_prime_awards_B.sql) builds the same public.prime_awards object
+    # as Path A (32_prime_awards.sql) from transaction_search instead of
+    # award_search alone (12.5x more awards). Running both builds prime_awards
+    # twice and drops the first -- ~25h of pure waste on full data -- so Path A
+    # is skipped. See 7413b1b (Path B) and the Sep-2026 06_derive stall.
+    skipped = {"32_prime_awards.sql"}
     for path in scripts:
+        if path.name in skipped:
+            ctx.log.info("skipping %s (superseded by 32_prime_awards_B.sql)", path.name)
+            continue
         if ctx.dry_run:
             ctx.log.info("dry-run: would run %s", path.name)
             continue
         ctx.log.info("building %s", path.name)
         db.psql_file(ctx.cfg, ctx.dbname, path)
+        if path.name == "31_all_entities.sql":
+            # Fresh stats for the 240M-row GROUP BY + joins that follow.
+            # derive() previously relied on stage 07_analyze (after all
+            # derive) or autovacuum, leaving the planner blind here.
+            ctx.log.info("analyzing public.all_entities for derive planning")
+            db.psql(
+                ctx.cfg, ctx.dbname, "ANALYZE public.all_entities;", tuples_only=False
+            )
 
     # Recovered matviews are declared WITH NO DATA so the DDL stays cheap and
     # rerunnable; populating them is this stage's job.
