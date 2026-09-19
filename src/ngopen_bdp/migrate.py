@@ -257,12 +257,21 @@ def build(
     # A matview arrives from pg_dump as a matview definition; a table arrives as
     # data. Either way it lands in the staging schema, never touching the
     # relation currently being served.
-    db.psql(
-        cfg,
-        serving,
-        f"DROP {_ALTER.get(kind, 'TABLE')} IF EXISTS {staged} CASCADE",
-        tuples_only=False,
-    )
+    #
+    # Both kinds are dropped because a matview is staged as a plain table (see
+    # _rewrite_schema): a retry after a code change may find either kind, and
+    # DROP TABLE on a matview (or vice versa) is an error, not a no-op, so the
+    # live kind is looked up rather than assumed.
+    live = db.relation_kind(cfg, serving, staged)
+    for keyword in (
+        {_ALTER.get(live, "TABLE")} if live else ("TABLE", "MATERIALIZED VIEW")
+    ):
+        db.psql(
+            cfg,
+            serving,
+            f"DROP {keyword} IF EXISTS {staged} CASCADE",
+            tuples_only=False,
+        )
     logger.info("transferring %s from %s", relation, candidate_db)
     deferred = db.transfer_relation(
         cfg,
@@ -573,28 +582,45 @@ def cluster_for(cfg: Config, dbname: str, relation: str) -> set[str]:
     return {relation}
 
 
-def _populate_staged(cfg: Config, serving: str, name: str, kind: str) -> None:
-    """Materialise a staged matview before it is swapped in.
+def _populate_staged(
+    cfg: Config, serving: str, candidate_db: str, name: str, kind: str
+) -> None:
+    """Fill a staged matview with the candidate's rows before it is swapped in.
 
-    pg_dump carries a materialised view across as a definition, not as data, so
-    a staged matview arrives empty. Refreshing it here rather than after the
-    swap means the relation is already populated at the moment it becomes the
-    served one -- there is no window in which the endpoint answers with an
-    empty result set.
+    pg_dump carries a materialised view across as a definition, not as data,
+    so a staged matview arrives empty. The rows are streamed over from the
+    candidate database with COPY -- byte-for-byte the content that was
+    verified there, recomputed nowhere in transit.
 
-    The definition still points at the base relations in the serving schema, so
-    this must run after those have been swapped. In practice that ordering is
-    natural: a matview depends on its inputs, and the inputs migrate first.
+    Refreshing instead would be wrong as well as slow: the view definition
+    points at the base relations in the serving schema, which still hold the
+    outgoing vintage at this point, so a refresh recomputes legacy content
+    and serves it under a migrated name.
     """
     if kind != "m":
         return
-    logger.info("refreshing staged %s.%s before swap", STAGING_SCHEMA, name)
-    db.psql(
-        cfg,
-        serving,
-        f"REFRESH MATERIALIZED VIEW {STAGING_SCHEMA}.{name}",
-        tuples_only=False,
+    logger.info(
+        "loading staged %s.%s with candidate data from %s",
+        STAGING_SCHEMA,
+        name,
+        candidate_db,
     )
+    db.copy_matview_data(
+        cfg, candidate_db, serving, f"public.{name}", target_schema=STAGING_SCHEMA
+    )
+
+
+def _live_alter(cfg: Config, dbname: str, relation: str) -> str:
+    """ALTER keyword for whatever kind a relation actually is right now.
+
+    A matview is staged as a plain table (see _rewrite_schema), so the staged
+    copy's kind differs from the candidate's recorded kind, and relations
+    swapped by older code are still matviews where newer swaps are tables.
+    Looking the kind up at cutover time keeps swap and rollback correct for
+    both generations without a version flag in the state row.
+    """
+    kind = db.relation_kind(cfg, dbname, relation) or "r"
+    return _ALTER.get(kind, "TABLE")
 
 
 def swap(
@@ -623,10 +649,19 @@ def swap(
 
     schema, name = _split(relation)
     kind = current.relkind or db.relation_kind(cfg, serving, relation) or "r"
-    alter = _ALTER.get(kind, "TABLE")
     legacy = f"{name}{LEGACY_SUFFIX}"
+    # The outgoing relation and the staged copy can be different kinds: the
+    # legacy rename follows what is actually serving, the incoming move
+    # follows what is actually staged (a matview arrives staged as a table).
+    legacy_alter = _live_alter(cfg, serving, relation)
+    staged_alter = _live_alter(cfg, serving, f"{STAGING_SCHEMA}.{name}")
 
-    _populate_staged(cfg, serving, name, kind)
+    candidate = current.candidate_db or ""
+    if kind == "m" and not candidate:
+        raise RuntimeError(
+            f"{relation} has no recorded candidate database; cannot load staged data"
+        )
+    _populate_staged(cfg, serving, candidate, name, kind)
 
     # One transaction. Readers either see the old relation for the whole of
     # their statement or the new one; there is no window where the name is
@@ -634,8 +669,8 @@ def swap(
     sql = (
         "BEGIN;\n"
         + _rename_dependents(schema, name, LEGACY_SUFFIX)
-        + f"ALTER {alter} IF EXISTS {schema}.{name} RENAME TO {legacy};\n"
-        + f"ALTER {alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n"
+        + f"ALTER {legacy_alter} IF EXISTS {schema}.{name} RENAME TO {legacy};\n"
+        + f"ALTER {staged_alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n"
         + _move_owned_sequences(STAGING_SCHEMA, schema, name)
         + _copy_grants(schema, name, legacy)
         + "COMMIT;"
@@ -697,21 +732,32 @@ def swap_cluster(
     # Populate any staged matviews before the transaction opens, for the same
     # reason as the single-relation path: a matview must not become the served
     # relation while still empty.
-    for _, _, name, kind, _ in staged:
-        _populate_staged(cfg, serving, name, kind)
+    for rel, _, name, kind, _ in staged:
+        state = states.get(rel)
+        candidate = (state.candidate_db if state else None) or ""
+        if kind == "m" and not candidate:
+            raise RuntimeError(
+                f"{rel} has no recorded candidate database; cannot load staged data"
+            )
+        _populate_staged(cfg, serving, candidate, name, kind)
 
     parts = ["BEGIN;\n"]
     # Rename every legacy relation and its dependents aside first, so that no
     # incoming relation collides with a name still held by the outgoing set.
-    for _, schema, name, _, alter in staged:
+    # Each side follows its live kind: outgoing is what serves now, incoming
+    # is what was staged (matviews arrive staged as tables).
+    for rel, schema, name, _, _ in staged:
         parts.append(_rename_dependents(schema, name, LEGACY_SUFFIX))
         parts.append(
-            f"ALTER {alter} IF EXISTS {schema}.{name} "
+            f"ALTER {_live_alter(cfg, serving, rel)} IF EXISTS {schema}.{name} "
             f"RENAME TO {name}{LEGACY_SUFFIX};\n"
         )
     # Only then move the candidates in, by which point every name is free.
-    for _, schema, name, _, alter in staged:
-        parts.append(f"ALTER {alter} {STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n")
+    for _, schema, name, _, _ in staged:
+        parts.append(
+            f"ALTER {_live_alter(cfg, serving, f'{STAGING_SCHEMA}.{name}')} "
+            f"{STAGING_SCHEMA}.{name} SET SCHEMA {schema};\n"
+        )
         parts.append(_move_owned_sequences(STAGING_SCHEMA, schema, name))
         parts.append(_copy_grants(schema, name, f"{name}{LEGACY_SUFFIX}"))
 
@@ -762,17 +808,19 @@ def rollback(
 
     schema, name = _split(relation)
     kind = current.relkind or "r"
-    alter = _ALTER.get(kind, "TABLE")
     legacy = f"{name}{LEGACY_SUFFIX}"
 
     # Exact reverse of the swap: move the candidate back to staging with its
     # sequences, restore the legacy name, then strip the suffix off the
     # dependents so the relation is indistinguishable from its pre-swap self.
+    # Each side follows its live kind, as in swap.
     sql = (
         "BEGIN;\n"
         + _move_owned_sequences(schema, STAGING_SCHEMA, name)
-        + f"ALTER {alter} {schema}.{name} SET SCHEMA {STAGING_SCHEMA};\n"
-        + f"ALTER {alter} {schema}.{legacy} RENAME TO {name};\n"
+        + f"ALTER {_live_alter(cfg, serving, relation)} "
+        f"{schema}.{name} SET SCHEMA {STAGING_SCHEMA};\n"
+        + f"ALTER {_live_alter(cfg, serving, f'{schema}.{legacy}')} "
+        f"{schema}.{legacy} RENAME TO {name};\n"
         + _strip_suffix(schema, name, LEGACY_SUFFIX)
         + "COMMIT;"
     )

@@ -238,6 +238,13 @@ def _rewrite_schema(
     COPY data blocks pass through untouched, because a data row containing
     ``public.`` is data, not a qualified name.
 
+    A bare ``REFRESH MATERIALIZED VIEW`` line is dropped. pg_dump emits the
+    view definition ``WITH NO DATA`` followed by a refresh, and running that
+    refresh in the target database recomputes the view from whatever base
+    tables happen to be there -- during a migration, the outgoing vintage.
+    The staged copy's rows are loaded explicitly from the candidate database
+    instead (see ``copy_matview_data``).
+
     When ``deferred`` is given, foreign-key statements are collected rather than
     emitted, and they are collected *before* rewriting so they name the schema
     the relations will occupy once swapped. A foreign key cannot be validated
@@ -276,12 +283,28 @@ def _rewrite_schema(
 
         stripped = line.lstrip()
 
+        if stripped.startswith(b"REFRESH MATERIALIZED VIEW"):
+            continue
+
+        # A materialised view is staged as a plain table carrying the
+        # candidate's rows. pg_dump emits the view definition WITH NO DATA
+        # plus a refresh, and neither ships bytes: the refresh would recompute
+        # from the serving schema's outgoing base tables (see copy_matview_data
+        # and _populate_staged). Rewriting the shell to CREATE TABLE AS with
+        # the same query WITH NO DATA yields an empty table with identical
+        # columns, which COPY can then load. The served relation therefore
+        # changes relkind from matview to table; that is honest -- the rows
+        # are candidate bytes with no refresh promise -- and documented in
+        # the migration state.
+        if stripped.startswith(b"CREATE MATERIALIZED VIEW "):
+            line = line.replace(b"CREATE MATERIALIZED VIEW ", b"CREATE TABLE ", 1)
+        elif stripped.startswith(b"ALTER MATERIALIZED VIEW "):
+            line = line.replace(b"ALTER MATERIALIZED VIEW ", b"ALTER TABLE ", 1)
+
         if deferred is not None:
             if pending is not None:
                 if b"FOREIGN KEY" in line:
-                    deferred.append(
-                        (pending + line).decode("utf-8", "replace").strip()
-                    )
+                    deferred.append((pending + line).decode("utf-8", "replace").strip())
                     pending = None
                     continue
                 flush()
@@ -396,6 +419,84 @@ def transfer_relation(
             f"loading {relation} into {target_db}.{target_schema} failed: {load_err}"
         )
     return deferred or []
+
+
+def copy_matview_data(
+    cfg: Config,
+    source_db: str,
+    target_db: str,
+    relation: str,
+    *,
+    target_schema: str,
+) -> None:
+    """Carry a materialised view's rows from one database into a staged copy.
+
+    pg_dump moves a materialised view as a definition plus a bare REFRESH, so
+    the row content never crosses in the schema transfer -- and running that
+    refresh would recompute the view from the *serving* base tables, i.e. the
+    outgoing vintage rather than the candidate one. This streams the candidate
+    rows across with COPY TO STDOUT / COPY FROM STDIN: no intermediate file,
+    so peak disk cost is the target copy only.
+
+    The staged copy is emptied first, so this is safe to re-run after a
+    rollback left a previous attempt's rows behind. The staged copy is a
+    plain table when the transfer filter rewrote the matview shell (see
+    _rewrite_schema) and a real matview otherwise, so the emptying follows
+    the live kind.
+    """
+    schema, _, table = relation.rpartition(".")
+    schema = schema or "public"
+    staged = f"{target_schema}.{table}"
+
+    if relation_kind(cfg, target_db, staged) == "m":
+        empty = f"REFRESH MATERIALIZED VIEW {quote_ident(target_schema)}.{quote_ident(table)} WITH NO DATA"
+    else:
+        empty = f"TRUNCATE {quote_ident(target_schema)}.{quote_ident(table)}"
+    psql(cfg, target_db, empty, tuples_only=False)
+
+    unload = [
+        "psql",
+        *_base_args(cfg, source_db),
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-q",
+        "-c",
+        f"COPY {quote_ident(schema)}.{quote_ident(table)} TO STDOUT",
+    ]
+    load = [
+        "psql",
+        *_base_args(cfg, target_db),
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-q",
+        "-c",
+        f"COPY {quote_ident(target_schema)}.{quote_ident(table)} FROM STDIN",
+    ]
+
+    with tempfile.TemporaryFile() as unload_log, tempfile.TemporaryFile() as load_log:
+        producer = subprocess.Popen(unload, stdout=subprocess.PIPE, stderr=unload_log)
+        assert producer.stdout is not None
+        consumer = subprocess.Popen(
+            load, stdin=producer.stdout, stdout=subprocess.DEVNULL, stderr=load_log
+        )
+        producer.stdout.close()
+
+        consumer.wait()
+        producer.wait()
+
+        unload_log.seek(0)
+        load_log.seek(0)
+        unload_err = unload_log.read().decode(errors="replace").strip()
+        load_err = load_log.read().decode(errors="replace").strip()
+
+    if producer.returncode != 0:
+        raise DatabaseError(
+            f"COPY TO STDOUT of {relation} from {source_db} failed: {unload_err}"
+        )
+    if consumer.returncode != 0:
+        raise DatabaseError(
+            f"COPY FROM STDIN of {relation} into {target_db}.{target_schema} failed: {load_err}"
+        )
 
 
 def relation_kind(cfg: Config, dbname: str, relation: str) -> str | None:
