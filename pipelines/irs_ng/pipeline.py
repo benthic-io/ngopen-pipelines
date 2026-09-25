@@ -199,7 +199,6 @@ def _ingest_bmf(ctx: Context, conn) -> int:
 
     total = 0
     for path in sorted(raw.glob("*-BMF.csv")):
-        release_date = path.name[:7] + "-01"
         ctx.log.info("BMF %s", path.name)
         inserted, updated = legacy.import_bmf_file(conn, str(path))
         ctx.log.info("BMF %s: %d inserted, %d updated", path.name, inserted, updated)

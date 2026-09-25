@@ -378,16 +378,10 @@ def derive(ctx: Context) -> Outcome:
         RECOVERED_DIR / "mv_district_spending.sql",
         RECOVERED_DIR / "mv_covid_spending.sql",
     ]
-    # Path B (32_prime_awards_B.sql) builds the same public.prime_awards object
-    # as Path A (32_prime_awards.sql) from transaction_search instead of
-    # award_search alone (12.5x more awards). Running both builds prime_awards
-    # twice and drops the first -- ~25h of pure waste on full data -- so Path A
-    # is skipped. See 7413b1b (Path B) and the Sep-2026 06_derive stall.
-    skipped = {"32_prime_awards.sql"}
+    # 32_prime_awards_B.sql is the canonical Path B build. The superseded
+    # Path A file was removed after 7413b1b; it rebuilt prime_awards a second
+    # time from award_search and cost roughly 25 hours on full data.
     for path in scripts:
-        if path.name in skipped:
-            ctx.log.info("skipping %s (superseded by 32_prime_awards_B.sql)", path.name)
-            continue
         if ctx.dry_run:
             ctx.log.info("dry-run: would run %s", path.name)
             continue
