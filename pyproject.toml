@@ -21,7 +21,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://benthic.io/ngopen/"
 Protocol = "https://benthic.io/bdp/"
-Repository = "https://github.com/benthic-io/ngopen-bdp-pipelines"
+Repository = "https://github.com/benthic-io/ngopen-pipelines"
 
 [project.scripts]
 ngopen = "ngopen_bdp.cli:main"

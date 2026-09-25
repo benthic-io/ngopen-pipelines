@@ -1,4 +1,4 @@
-# ngopen-bdp-pipelines
+# ngopen-pipelines
 
 ETL pipelines for the **NGOpen** collection — five public PostgREST APIs over
 U.S. government spending, nonprofit, and legislative data, published at

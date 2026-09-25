@@ -122,8 +122,8 @@ geocodes, derives, and exposes. Re-running fetches whatever the source has
 published since and updates in place.
 
 ```bash
-git clone https://github.com/benthic-io/ngopen-bdp-pipelines
-cd ngopen-bdp-pipelines
+git clone https://github.com/benthic-io/ngopen-pipelines
+cd ngopen-pipelines
 python3 -m venv .venv && ./.venv/bin/pip install -e .
 
 cp ngopen.toml /path/you/control/ngopen.toml   # edit [paths] at minimum
@@ -232,7 +232,7 @@ obvious host-side answer:
 Type=oneshot
 EnvironmentFile=%h/.config/ngopen/env
 Environment=NGOPEN_CONFIG=%h/.config/ngopen/ngopen.toml
-ExecStart=%h/benthic-io/projects/ngopen-bdp-pipelines/.venv/bin/ngopen run %i
+ExecStart=%h/benthic-io/projects/ngopen-pipelines/.venv/bin/ngopen run %i
 ```
 
 ---

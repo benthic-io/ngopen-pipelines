@@ -76,7 +76,7 @@ up_cdmaps   = 3003
 author_identity = "brian@benthic.io"
 author_pubkey   = "qwG8vQQN7m/uB0Nwgor3s1EJCKjqZM/SNThV+V7XumM="
 collection      = "ngopen"
-repository_url  = "https://github.com/benthic-io/ngopen-bdp-pipelines"
+repository_url  = "https://github.com/benthic-io/ngopen-pipelines"
 signing_key     = "~/.config/bdp/signing.key"
 
 [sources.usaspending]
