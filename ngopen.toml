@@ -7,11 +7,12 @@
 #   1. --config <path>
 #   2. $NGOPEN_CONFIG
 #   3. ./ngopen.toml
-#   4. ~/.config/ngopen/ngopen.toml
+#   4. the repository root
+#   5. ~/.config/ngopen/ngopen.toml
 #
 # Secrets are NEVER stored here. They are read from the environment only.
 # Documented home for them: ~/.config/ngopen/env (chmod 0600), sourced by
-# the systemd user units. See MIGRATION.md.
+# the systemd user units. See AUDIT.md section 4.
 
 [paths]
 root     = "/raid_0/ngopen"

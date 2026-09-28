@@ -1,26 +1,45 @@
-# Migration
+# Audit
 
 How the legacy `ngopen` scripts became these pipelines, what was recovered
 along the way, and what it costs to run any of this from scratch.
 
+For the operational procedure — comparing a candidate, swapping relations,
+rolling back, reclaiming disk — see [MIGRATE.md](MIGRATE.md).
+
 ---
 
-## 1. Migration status
+## 1. Status
 
-Each dataset's BDP manifest carries `etl_provenance.migration_status`. It
-starts at `pending` — pinned to the scaffold commit — and tightens to
-`migrated` once that pipeline has been proven end to end against real data.
+Each dataset's BDP manifest carries `etl_provenance.migration_status`, which
+starts at `pending` and tightens to `migrated` once that pipeline has been
+proven end to end against real data.
 
-| Dataset       | Legacy script(s)                                    | Pipeline                 | Status  |
-| ------------- | --------------------------------------------------- | ------------------------ | ------- |
-| `usaspending` | `geocode_usas.py`, `build_entity_awards.py`         | `pipelines/usaspending/` | pending |
-| `samer`       | `gov_to_pg.py`, `sam_pipeline.py`, `geocode_sam.py` | `pipelines/samer/`       | pending |
-| `irs_ng`      | `irs_ng.py`                                         | `pipelines/irs_ng/`      | pending |
-| `usp_cl`      | `us_project_to_pg.py`                               | `pipelines/usp_cl/`      | pending |
-| `up_cdmaps`   | `ucla_cd_to_pg.py`                                  | `pipelines/up_cdmaps/`   | pending |
+**All five are `migrated`.** Values below are read from the published
+manifests at <https://benthic.io/bdp/ngopen/>, not from this repository.
+
+| Dataset       | Legacy script(s)                                    | Pipeline                                                    | Status     | `migrated_at` | Commit    |
+| ------------- | --------------------------------------------------- | ----------------------------------------------------------- | ---------- | ------------- | --------- |
+| `up_cdmaps`   | `ucla_cd_to_pg.py`                                  | [`pipelines/up_cdmaps/`](pipelines/up_cdmaps/README.md)     | `migrated` | 2026-08-11    | `66f5855` |
+| `samer`       | `gov_to_pg.py`, `sam_pipeline.py`, `geocode_sam.py` | [`pipelines/samer/`](pipelines/samer/README.md)             | `migrated` | 2026-08-11    | `66f5855` |
+| `usp_cl`      | `us_project_to_pg.py`                               | [`pipelines/usp_cl/`](pipelines/usp_cl/README.md)           | `migrated` | 2026-08-11    | `66f5855` |
+| `irs_ng`      | `irs_ng.py`                                         | [`pipelines/irs_ng/`](pipelines/irs_ng/README.md)           | `migrated` | 2026-08-14    | `66f5855` |
+| `usaspending` | `geocode_usas.py`, `build_entity_awards.py`         | [`pipelines/usaspending/`](pipelines/usaspending/README.md) | `migrated` | 2026-09-21    | `b25eba8` |
+
+Each manifest also names its `pipeline_entrypoint` and
+`etl_provenance.source_attribution`, so the upstream URLs and retrieval dates
+are on the record rather than in this file.
 
 Advancing a row means re-signing that manifest. The git history of the
 published manifests is therefore the migration audit trail.
+
+### Evidence
+
+`migrated` is a claim, and the evidence for it is in
+[`audit/`](audit/) — the structural comparison of each pipeline-built candidate
+against the live serving database, run through `ngopen compare`. Indexed in
+[MIGRATE.md](MIGRATE.md) §7. `usaspending` additionally has a written
+resolution record for every class of drift it surfaced:
+[`audit/usaspending-drift-resolution.md`](audit/usaspending-drift-resolution.md).
 
 ---
 
@@ -83,6 +102,25 @@ the manifests rather than `derived`, because calling a hand-built object
 Three extensions — `cube`, `earthdistance`, `fuzzystrmatch` — are installed in
 `usaspending_db` but appear in neither the upstream dump's requirements nor any
 script. Captured in `recovered/usaspending/extensions_recovered.sql`.
+
+### Two more hand-built objects, found later
+
+The count of twelve above was accurate as of 2026-08-09 and is now
+incomplete. The `usaspending` validation run surfaced two further objects that
+were applied by hand and never written down. Both are recovered in this
+repository; neither is in the table above.
+
+| Database         | Object                                                                  | Kind              | File                                             |
+| ---------------- | ----------------------------------------------------------------------- | ----------------- | ------------------------------------------------ |
+| `usaspending_db` | `public.update_geom_point_trigger()` + trigger `trig_update_geom_point` | function, trigger | `recovered/usaspending/geom_point_trigger.sql`   |
+| `usaspending_db` | `cube`, `earthdistance`, `fuzzystrmatch`                                | 3 extensions      | `recovered/usaspending/extensions_recovered.sql` |
+
+The trigger is drift class #6 in
+[`audit/usaspending-drift-resolution.md`](audit/usaspending-drift-resolution.md).
+Both sets were recovered on 2026-08-09 and are declared `provenance:
+"recovered"` in the manifest. The trigger in particular is easy to miss: it is
+what keeps `geom_point` in step with the geocoded lat/lon columns, so its
+absence is not a cosmetic difference.
 
 ### Indexes
 
