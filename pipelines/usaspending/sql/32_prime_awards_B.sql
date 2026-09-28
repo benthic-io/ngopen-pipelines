@@ -137,3 +137,29 @@ CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_state ON public.prime_awar
 CREATE INDEX IF NOT EXISTS idx_prime_awards_pop_state ON public.prime_awards(pop_state);
 CREATE INDEX IF NOT EXISTS idx_prime_awards_total_obligation ON public.prime_awards(total_obligation) WHERE total_obligation > 0;
 CREATE INDEX IF NOT EXISTS idx_prime_awards_awarding_agency ON public.prime_awards(awarding_agency);
+
+-- Composite of the two columns the site's own front end always pairs with the
+-- sort. `awarding_agency_code` had no index at all, so a query filtering only on
+-- it planned as a Seq Scan over 187 GB, and the filtered+sorted dashboard shape
+-- read 153,228 buffers to return 20 rows -- 51s cold, 276ms warm. This seeks
+-- straight to (agency, year) and walks total_obligation backwards: 24 buffers,
+-- 0.06ms.
+--
+-- `total_obligation DESC` is last on purpose, so the same index serves a filter
+-- with no sort at all. TABLESPACE is stated because the live copy lives on
+-- ssd_1tb while every index above inherits default_tablespace, so without it a
+-- rebuild quietly moves this 5.6GB index back to the RAID.
+CREATE INDEX IF NOT EXISTS idx_prime_awards_agency_fy_total
+  ON public.prime_awards(awarding_agency_code, fiscal_year, total_obligation DESC)
+  TABLESPACE ssd_1tb;
+
+-- Unfiltered top-N, which is what `order=total_obligation.desc&limit=5` sends.
+-- Kept separate from idx_prime_awards_total_obligation because that one is ASC
+-- and partial (`> 0`), so it cannot serve a descending order: btree reads `desc`
+-- as `desc nulls first`, and a client asking for NULLS LAST therefore gets no
+-- index at all and a parallel seq scan instead. That is a client-supplied query
+-- string, so it is reachable from the public API -- measured at 310s before
+-- this index existed.
+CREATE INDEX IF NOT EXISTS idx_prime_awards_top
+  ON public.prime_awards(total_obligation DESC)
+  TABLESPACE ssd_1tb;

@@ -76,11 +76,29 @@ CREATE INDEX IF NOT EXISTS idx_bmf_current ON public.bmf_organizations USING btr
 
 CREATE INDEX IF NOT EXISTS idx_bmf_ein ON public.bmf_organizations USING btree (ein);
 
+-- Trigram over the street column, which is the one callers actually search with
+-- ILIKE. The two trigram indexes below cover the name columns; the address was
+-- the gap, so `f990_org_addr_street=ilike.PO+BOX+1306%` fell back to a Seq Scan
+-- over 1.5GB and took 2.3-6.5s. 121 candidates now, 51ms. A btree cannot serve
+-- this: the pattern is a case-insensitive prefix, and text_pattern_ops only
+-- helps LIKE, not ILIKE.
+CREATE INDEX IF NOT EXISTS idx_bmf_addr_street_trgm ON public.bmf_organizations USING gin (f990_org_addr_street public.gin_trgm_ops);
+
 CREATE INDEX IF NOT EXISTS idx_bmf_geo_mod2 ON public.bmf_organizations USING btree (((id % 2)), id) WHERE ((latitude IS NULL) AND (f990_org_addr_street IS NOT NULL) AND (f990_org_addr_street <> ''::text));
 
 CREATE INDEX IF NOT EXISTS idx_bmf_geo_mod3 ON public.bmf_organizations USING btree (((id % 3)), id) WHERE ((latitude IS NULL) AND (f990_org_addr_street IS NOT NULL) AND (f990_org_addr_street <> ''::text));
 
 CREATE INDEX IF NOT EXISTS idx_bmf_geocoded ON public.bmf_organizations USING btree (latitude) WHERE (latitude IS NOT NULL);
+
+-- The index rpc_nonprofits_nearby actually needs. It wraps the predicate in
+-- ST_Transform(geom_point, 3857), so the GiST index on the raw 4326 column
+-- above cannot serve it -- the projection sits between the index and the
+-- predicate, and every row was reprojected and tested in a filter: 2,259,215
+-- rows removed, 109,201 buffers, 2931ms. Indexing the transformed expression
+-- lets ST_DWithin use it: 31 buffers, 3.5ms, and a 5,965-row radius query in
+-- 40ms. An expression index rather than a generated column, because adding a
+-- STORED generated column rewrites the table under an ACCESS EXCLUSIVE lock.
+CREATE INDEX IF NOT EXISTS idx_bmf_geom_3857 ON public.bmf_organizations USING gist (ST_Transform(geom_point, 3857));
 
 CREATE INDEX IF NOT EXISTS idx_bmf_geom_point ON public.bmf_organizations USING gist (geom_point) WHERE (geom_point IS NOT NULL);
 
