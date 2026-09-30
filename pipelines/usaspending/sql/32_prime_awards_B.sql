@@ -163,3 +163,21 @@ CREATE INDEX IF NOT EXISTS idx_prime_awards_agency_fy_total
 CREATE INDEX IF NOT EXISTS idx_prime_awards_top
   ON public.prime_awards(total_obligation DESC)
   TABLESPACE ssd_1tb;
+
+-- The filtered-and-sorted shape: fiscal_year equality plus an award_id sort.
+-- The two single-column indexes cannot answer this together, and the planner
+-- picked the worst available answer rather than a seq scan -- it walked the
+-- whole 183M-entry idx_prime_awards_award_id and filtered fiscal_year on each
+-- entry, estimated to touch 10,175,169 rows to return 100. Cost 0.57..112744059.
+--
+-- One such plan was orphaned by nginx at its 60s read timeout and kept burning
+-- I/O in Postgres for 32 minutes before something terminated it. With this
+-- index the same query seeks straight to the 2023 partition and reads the
+-- award_id order for free, because award_id is the second column.
+--
+-- Cost fell 112,744,059 -> 30.84, a factor of ~3.66 million. Measured on
+-- production 2026-09-30; EXPLAIN output in the benthic-publish repo under
+-- task1/. TABLESPACE ssd_1tb for the same reason as the two above.
+CREATE INDEX IF NOT EXISTS idx_prime_awards_fy_award_id
+  ON public.prime_awards(fiscal_year, award_id)
+  TABLESPACE ssd_1tb;

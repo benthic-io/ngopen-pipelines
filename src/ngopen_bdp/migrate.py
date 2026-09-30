@@ -623,6 +623,39 @@ def _live_alter(cfg: Config, dbname: str, relation: str) -> str:
     return _ALTER.get(kind, "TABLE")
 
 
+def _analyze_swapped(
+    cfg: Config, serving: str, swapped: Sequence[tuple[str, str]]
+) -> None:
+    """ANALYZE freshly swapped relations so the planner has statistics for them.
+
+    A transferred relation arrives with ``reltuples = -1`` and no
+    ``last_analyze``: pg_dump does not carry planner statistics, so the
+    statistics gathered by stage ``07_analyze`` in the candidate database do not
+    survive the hop. Nothing downstream of a swap replaces them -- the serving
+    database is not run through the stage sequence -- so without this the
+    relation serves with no statistics at all, and a stale ``reltuples`` left by
+    a REFRESH MATERIALIZED VIEW is worse than nothing because the planner trusts
+    it. Observed on production 2026-09-30: usaspending_db's nine migrated
+    relations had never been analyzed.
+
+    Failure here is logged and swallowed. A missing statistic degrades a plan;
+    it does not invalidate a cutover that has already committed and already
+    renamed the relation, and refusing to return from ``swap`` in that state
+    would strand the relation as ``swapped`` with no legacy row recorded.
+    """
+    for schema, name in swapped:
+        qualified = f"{schema}.{name}"
+        try:
+            db.psql(cfg, serving, f"ANALYZE {qualified};", tuples_only=False)
+        except db.DatabaseError as exc:
+            logger.warning(
+                "%s swapped but ANALYZE failed; it will serve without "
+                "statistics until something analyzes it: %s",
+                qualified,
+                exc,
+            )
+
+
 def swap(
     cfg: Config,
     dataset: str,
@@ -676,6 +709,8 @@ def swap(
         + "COMMIT;"
     )
     db.psql(cfg, serving, sql, tuples_only=False)
+
+    _analyze_swapped(cfg, serving, [(schema, name)])
 
     set_state(
         cfg,
@@ -774,6 +809,8 @@ def swap_cluster(
     parts.append("COMMIT;")
 
     db.psql(cfg, serving, "".join(parts), tuples_only=False)
+
+    _analyze_swapped(cfg, serving, [(schema, name) for _, schema, name, _, _ in staged])
 
     results: list[RelationState] = []
     for rel, schema, name, kind, _ in staged:
