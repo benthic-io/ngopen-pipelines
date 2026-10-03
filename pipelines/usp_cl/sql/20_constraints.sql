@@ -8,12 +8,6 @@
 -- Indexes whose target is a materialized view live in 25_derived_indexes.sql
 -- and are applied in 06_derive, after the views they index have been created.
 
-CREATE INDEX IF NOT EXISTS idx_cm_bioguide_id ON public.committee_membership USING btree (bioguide_id)
-  TABLESPACE ssd_1tb;
-
-CREATE INDEX IF NOT EXISTS idx_cm_thomas_id ON public.committee_membership USING btree (committee_thomas_id)
-  TABLESPACE ssd_1tb;
-
 CREATE INDEX IF NOT EXISTS idx_cm_title ON public.committee_membership USING btree (title)
   TABLESPACE ssd_1tb;
 
@@ -67,13 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_exec_name_trgm ON public.executives USING gin (la
 CREATE INDEX IF NOT EXISTS idx_leg_govtrack_id ON public.legislators USING btree (govtrack_id)
   TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_leg_is_current ON public.legislators USING btree (is_current)
-  TABLESPACE ssd_1tb;
-
 CREATE INDEX IF NOT EXISTS idx_leg_last_name_trgm ON public.legislators USING gin (last_name public.gin_trgm_ops)
-  TABLESPACE ssd_1tb;
-
-CREATE INDEX IF NOT EXISTS idx_leg_name_trgm ON public.legislators USING gin (official_full public.gin_trgm_ops)
   TABLESPACE ssd_1tb;
 
 CREATE INDEX IF NOT EXISTS idx_legislators_first_name ON public.legislators USING btree (first_name)
@@ -100,13 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_lsm_bioguide_id ON public.legislator_social_media
 CREATE INDEX IF NOT EXISTS idx_lsm_twitter ON public.legislator_social_media USING btree (twitter)
   TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_lt_bioguide_id ON public.legislator_terms USING btree (bioguide_id)
-  TABLESPACE ssd_1tb;
-
 CREATE INDEX IF NOT EXISTS idx_lt_congress ON public.legislator_terms USING btree (congress_start)
-  TABLESPACE ssd_1tb;
-
-CREATE INDEX IF NOT EXISTS idx_lt_state ON public.legislator_terms USING btree (state)
   TABLESPACE ssd_1tb;
 
 CREATE INDEX IF NOT EXISTS idx_lt_state_district ON public.legislator_terms USING btree (state, district)

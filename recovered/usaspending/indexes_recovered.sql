@@ -38,6 +38,29 @@ CREATE INDEX IF NOT EXISTS idx_fabaward_distinct_award_key ON public.financial_a
 CREATE INDEX IF NOT EXISTS idx_fabaward_fain ON public.financial_accounts_by_awards USING btree (fain);
 CREATE INDEX IF NOT EXISTS idx_fabaward_obligations ON public.financial_accounts_by_awards USING btree (obligations_incurred_total_by_award_cpe);
 CREATE INDEX IF NOT EXISTS idx_fabaward_piid ON public.financial_accounts_by_awards USING btree (piid);
+
+-- fain is a program key, not an entity key: its values are an agency prefix then a
+-- program suffix (SECAGD21CA3071, CH05043808, FEL28825223). The question this column
+-- exists to answer is "show me everything under SECAGD", which is a prefix search,
+-- and the plain btree above cannot serve one. Measured on production 2026-10-03:
+--
+--   before  Parallel Seq Scan on financial_accounts_by_awards  cost=0.00..9952207.80
+--             Filter: (fain ~~ 'SECAGD%')
+--
+--   after   Index Scan using idx_fabaward_fain_pattern_ops   cost=0.57..2.79
+--             Index Cond: ((fain ~>=~ 'SECAGD') AND (fain ~<~ 'SECAGE'))
+--
+-- varchar_pattern_ops is the opclass that makes a C-collation btree usable for LIKE
+-- 'prefix%'. Equality lookups keep using idx_fabaward_fain, which is the cheaper
+-- index for them.
+--
+-- distinct_award_key has the same shape (MMC19164|||, MMC22059|||) and would take the
+-- same index for the same reason. Not built: this relation had one recorded query in
+-- the entire statistics history, and a 4.6 GB index on a 65 GB relation is not a
+-- decision to make on a shape argument alone. Recorded here so it is one statement
+-- away rather than re-derived.
+CREATE INDEX IF NOT EXISTS idx_fabaward_fain_pattern_ops
+  ON public.financial_accounts_by_awards USING btree (fain varchar_pattern_ops);
 CREATE INDEX IF NOT EXISTS idx_fabaward_reporting_period_end ON public.financial_accounts_by_awards USING btree (reporting_period_end);
 CREATE INDEX IF NOT EXISTS idx_fabaward_submission_id ON public.financial_accounts_by_awards USING btree (submission_id);
 CREATE INDEX IF NOT EXISTS idx_fabaward_treasury_account_id ON public.financial_accounts_by_awards USING btree (treasury_account_id);
@@ -122,8 +145,20 @@ CREATE INDEX IF NOT EXISTS idx_rpt_subaward_prime_uei ON rpt.subaward_search USI
 CREATE INDEX IF NOT EXISTS idx_rpt_subaward_sub_parent_uei ON rpt.subaward_search USING btree (sub_ultimate_parent_uei);
 CREATE INDEX IF NOT EXISTS idx_rpt_subaward_sub_uei ON rpt.subaward_search USING btree (sub_awardee_or_recipient_uei);
 
--- rpt.transaction_search_fabs
-CREATE INDEX IF NOT EXISTS idx_fabs_uei ON rpt.transaction_search_fabs USING btree (recipient_uei);
+-- rpt.transaction_search_fabs and _fpds are 207 GB and 330 GB with no other index at
+-- all, and a recipient_uei filter on them plans a parallel seq scan at cost 26,351,743.
+-- These two statements were found on production 2026-10-03 in the state a CREATE INDEX
+-- CONCURRENTLY leaves when it is interrupted before writing anything:
+--
+--   idx_fabs_uei  valid=false ready=false size=0 bytes
+--   idx_fpds_uei  valid=false ready=false size=0 bytes
+--
+-- IF NOT EXISTS is what made that permanent: the relation exists, so every rebuild
+-- skipped the statement and the wreckage stayed. Dropped 2026-10-03 with DROP INDEX
+-- CONCURRENTLY. These rebuilds are multi-hour, so they belong in a deliberate window
+-- rather than on the end of an index pass.
+DROP INDEX CONCURRENTLY IF EXISTS rpt.idx_fabs_uei;
+CREATE INDEX CONCURRENTLY idx_fabs_uei ON rpt.transaction_search_fabs USING btree (recipient_uei);
 
--- rpt.transaction_search_fpds
-CREATE INDEX IF NOT EXISTS idx_fpds_uei ON rpt.transaction_search_fpds USING btree (recipient_uei);
+DROP INDEX CONCURRENTLY IF EXISTS rpt.idx_fpds_uei;
+CREATE INDEX CONCURRENTLY idx_fpds_uei ON rpt.transaction_search_fpds USING btree (recipient_uei);
