@@ -167,3 +167,48 @@ CREATE INDEX idx_all_entities_total_obligation ON public.all_entities(total_obli
 -- The staging tables are kept, matching live reality. They are lineage
 -- intermediates, are not exposed through PostgREST, and are truncated and
 -- rebuilt by the DROP ... IF EXISTS at the top of this file on every run.
+
+-- The district geography that pairs with the state geography indexed above.
+-- all_entities is the most-used relation in the catalogue (3,501 of 17,223 MCP
+-- calls, 40% of traffic), and idx_all_entities_state exists while
+-- congressional_district had no index at all.
+--
+-- Measured on production 2026-10-02, EXPLAIN without ANALYZE:
+--
+--   before  Limit (cost=0.00..4.86 rows=10)
+--             ->  Seq Scan on all_entities (cost=0.00..682563.45 rows=1403332)
+--                   Filter: (congressional_district = '03'::text)
+--
+--   after   Limit (cost=0.44..4.21 rows=10)
+--             ->  Index Scan using idx_all_entities_district
+--                   (cost=0.44..529675.33 rows=1403317)
+--                   Index Cond: (congressional_district = '03'::text)
+--
+-- Partial, WHERE congressional_district IS NOT NULL, exactly mirroring
+-- idx_all_entities_state above. 399,213 of 17,884,243 rows are NULL, so the
+-- partial form is both smaller and consistent with what is already there. The
+-- live index is 116 MB.
+--
+-- The factor is only ~1.3 for '03', and that is not the index failing: '03'
+-- matches 1,416,153 of 17,884,243 rows, 7.92%, so an Index Scan that visits 1.4M
+-- heap rows and a Seq Scan of a 3.5 GB matview are within 30% of each other. The
+-- matched-selectivity comparator is idx_all_entities_state on state='CA', 2.16M
+-- rows, costing 542,831.39 -- the same shape.
+--
+-- The win is available across the whole spread, and the spread is wide: district
+-- counts run from 1 row to 1,628,461. Every one of them now has a seek instead of
+-- a 3.5 GB scan.
+--
+-- TABLESPACE ssd_1tb: the eleven live indexes on this matview are all in ssd_1tb,
+-- but none of the CREATE statements above pins a tablespace, so a rebuild from
+-- this file would put every one of them back on default_tablespace, which is
+-- empty. That drift predates this index; it is recorded rather than fixed here
+-- because changing all ten existing statements is a separate change. This one is
+-- pinned so it does not add to it.
+--
+-- Built CREATE INDEX CONCURRENTLY on the running server (16.8s). This file is the
+-- rebuild path: it begins with DROP MATERIALIZED VIEW ... CASCADE, so there are
+-- no concurrent readers and CONCURRENTLY could not run inside a transaction.
+CREATE INDEX idx_all_entities_district ON public.all_entities(congressional_district)
+  TABLESPACE ssd_1tb
+  WHERE congressional_district IS NOT NULL;

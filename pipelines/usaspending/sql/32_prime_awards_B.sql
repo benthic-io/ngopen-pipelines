@@ -181,3 +181,50 @@ CREATE INDEX IF NOT EXISTS idx_prime_awards_top
 CREATE INDEX IF NOT EXISTS idx_prime_awards_fy_award_id
   ON public.prime_awards(fiscal_year, award_id)
   TABLESPACE ssd_1tb;
+
+-- The district geography that pairs with the state geography indexed above.
+-- idx_prime_awards_recipient_state and idx_prime_awards_pop_state were both
+-- built; the congressional_district columns beside them never were, so the only
+-- access path to a district filter was a scan of all 198 GB.
+--
+-- From the MCP's own trace store, prime_awards is 62% of all upstream time
+-- (6,553s over 294 calls, 22,290ms average) on 1.7% of 17,223 calls, and
+-- recipient_congressional_district was the filter on the largest single query on
+-- record: one call, 3,731 MB read, 28.2 seconds.
+--
+-- Measured on production 2026-10-02, EXPLAIN without ANALYZE:
+--
+--   before  Limit (cost=0.00..17.06 rows=10)
+--             ->  Seq Scan on prime_awards (cost=0.00..23815345.40 rows=13956439)
+--                   Filter: (recipient_congressional_district = '03'::text)
+--
+--   after   Limit (cost=0.57..9.04 rows=10)
+--             ->  Index Scan using idx_prime_awards_recipient_congressional_district
+--                   (cost=0.57..11822827.99 rows=13962570)
+--                   Index Cond: (recipient_congressional_district = '03'::text)
+--
+-- The scan cost fell by a factor of ~2.0. That is a smaller factor than it looks
+-- because the filter is genuinely unselective: '03' matches 14,201,822 of
+-- 182,995,664 rows, 7.76%. A Seq Scan and an Index Scan that has to visit 14M
+-- heap rows are within a factor of two of each other -- the win is that the index
+-- is free of the table's 198 GB of other columns, not that it visits few rows.
+--
+-- The fair comparison is the indexed column at the same selectivity:
+-- recipient_state='CA' costs 0.57..11032157.49 for 12,648,309 rows. For matched
+-- selectivity the two columns cost the same, which is the point: this index now
+-- does exactly what the state index already did. Where the filter IS selective the
+-- win is large -- recipient_state='03' costs 0.57..14763.74 for 17 rows, and
+-- district values vary from 3.3M to 14.2M rows, so the same access path is
+-- available at whatever selectivity a given district happens to have.
+--
+-- TABLESPACE ssd_1tb for the same reason as the three above: the table lives on
+-- the SSD tablespace, so an unpinned build would put a 1.2 GB index on the RAID.
+-- The live index is 1,209 MB.
+--
+-- Built CREATE INDEX CONCURRENTLY on the running server (20m51s). This file is the
+-- rebuild path, where the matview was just dropped and recreated, where there are
+-- no concurrent readers, and where CONCURRENTLY could not run inside a transaction
+-- anyway.
+CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_congressional_district
+  ON public.prime_awards(recipient_congressional_district)
+  TABLESPACE ssd_1tb;
