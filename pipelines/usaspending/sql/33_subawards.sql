@@ -113,11 +113,23 @@ LEFT JOIN public.all_entities ae_duns ON ss.sub_awardee_or_recipient_uniqu = ae_
 LEFT JOIN public.all_entities ae_prime_uei ON ss.awardee_or_recipient_uei = ae_prime_uei.uei
 LEFT JOIN public.all_entities ae_prime_duns ON ss.awardee_or_recipient_uniqu = ae_prime_duns.duns AND ae_prime_uei.entity_id IS NULL;
 
-CREATE UNIQUE INDEX idx_subawards_subaward_id ON public.subawards(subaward_id);
-CREATE INDEX idx_subawards_unique_award_key ON public.subawards(unique_award_key);
-CREATE INDEX idx_subawards_sub_action_date ON public.subawards(sub_action_date);
-CREATE INDEX idx_subawards_fiscal_year ON public.subawards(fiscal_year);
-CREATE INDEX idx_subawards_sub_recipient_uei ON public.subawards(sub_recipient_uei) WHERE sub_recipient_uei IS NOT NULL;
-CREATE INDEX idx_subawards_linked_sub_entity ON public.subawards(linked_sub_entity_id) WHERE linked_sub_entity_id IS NOT NULL;
-CREATE INDEX idx_subawards_subaward_amount ON public.subawards(subaward_amount) WHERE subaward_amount > 0;
-CREATE INDEX idx_subawards_sub_state ON public.subawards(sub_state) WHERE sub_state IS NOT NULL;
+CREATE UNIQUE INDEX idx_subawards_subaward_id ON public.subawards(subaward_id)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_subawards_unique_award_key ON public.subawards(unique_award_key)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_subawards_sub_action_date ON public.subawards(sub_action_date)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_subawards_fiscal_year ON public.subawards(fiscal_year)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_subawards_sub_recipient_uei ON public.subawards(sub_recipient_uei)
+  TABLESPACE ssd_1tb
+  WHERE sub_recipient_uei IS NOT NULL;
+CREATE INDEX idx_subawards_linked_sub_entity ON public.subawards(linked_sub_entity_id)
+  TABLESPACE ssd_1tb
+  WHERE linked_sub_entity_id IS NOT NULL;
+CREATE INDEX idx_subawards_subaward_amount ON public.subawards(subaward_amount)
+  TABLESPACE ssd_1tb
+  WHERE subaward_amount > 0;
+CREATE INDEX idx_subawards_sub_state ON public.subawards(sub_state)
+  TABLESPACE ssd_1tb
+  WHERE sub_state IS NOT NULL;

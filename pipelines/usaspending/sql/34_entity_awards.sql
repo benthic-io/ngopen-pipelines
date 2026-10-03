@@ -78,14 +78,25 @@ SELECT * FROM (
     JOIN public.subawards sa ON ae.entity_id = sa.linked_sub_entity_id
 ) combined;
 
-CREATE UNIQUE INDEX idx_entity_awards_id ON public.entity_awards(award_id, award_type);
-CREATE INDEX idx_entity_awards_entity_id ON public.entity_awards(entity_id);
-CREATE INDEX idx_entity_awards_entity_fy ON public.entity_awards(entity_id, fiscal_year);
-CREATE INDEX idx_entity_awards_geohash ON public.entity_awards(entity_geohash) WHERE entity_geohash IS NOT NULL;
-CREATE INDEX idx_entity_awards_name ON public.entity_awards USING gin(entity_name gin_trgm_ops);
-CREATE INDEX idx_entity_awards_fiscal_year ON public.entity_awards(fiscal_year);
-CREATE INDEX idx_entity_awards_action_date ON public.entity_awards(action_date);
-CREATE INDEX idx_entity_awards_award_type ON public.entity_awards(award_type);
-CREATE INDEX idx_entity_awards_state ON public.entity_awards(entity_state) WHERE entity_state IS NOT NULL;
+CREATE UNIQUE INDEX idx_entity_awards_id ON public.entity_awards(award_id, award_type)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_entity_id ON public.entity_awards(entity_id)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_entity_fy ON public.entity_awards(entity_id, fiscal_year)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_geohash ON public.entity_awards(entity_geohash)
+  TABLESPACE ssd_1tb
+  WHERE entity_geohash IS NOT NULL;
+CREATE INDEX idx_entity_awards_name ON public.entity_awards USING gin(entity_name gin_trgm_ops)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_fiscal_year ON public.entity_awards(fiscal_year)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_action_date ON public.entity_awards(action_date)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_award_type ON public.entity_awards(award_type)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_entity_awards_state ON public.entity_awards(entity_state)
+  TABLESPACE ssd_1tb
+  WHERE entity_state IS NOT NULL;
 
 GRANT SELECT ON public.entity_awards TO postgres;

@@ -8,28 +8,43 @@
 -- Indexes whose target is a materialized view live in 25_derived_indexes.sql
 -- and are applied in 06_derive, after the views they index have been created.
 
-CREATE INDEX IF NOT EXISTS idx_sam_current ON public.sam_registrations USING btree (is_current);
+CREATE INDEX IF NOT EXISTS idx_sam_current ON public.sam_registrations USING btree (is_current)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_dba_trgm ON public.sam_registrations USING gin (dba_name public.gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_sam_dba_trgm ON public.sam_registrations USING gin (dba_name public.gin_trgm_ops)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_duns ON public.sam_registrations USING btree (duns);
+CREATE INDEX IF NOT EXISTS idx_sam_duns ON public.sam_registrations USING btree (duns)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_entity_id ON public.sam_registrations USING btree (entity_id);
+CREATE INDEX IF NOT EXISTS idx_sam_entity_id ON public.sam_registrations USING btree (entity_id)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_expiration ON public.sam_registrations USING btree (registration_expiration);
+CREATE INDEX IF NOT EXISTS idx_sam_expiration ON public.sam_registrations USING btree (registration_expiration)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_geom_point ON public.sam_registrations USING gist (geom_point) WHERE (geom_point IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_sam_geom_point ON public.sam_registrations USING gist (geom_point)
+  TABLESPACE ssd_1tb
+  WHERE (geom_point IS NOT NULL);
 
-CREATE INDEX IF NOT EXISTS idx_sam_is_current ON public.sam_registrations USING btree (is_current);
+CREATE INDEX IF NOT EXISTS idx_sam_is_current ON public.sam_registrations USING btree (is_current)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_naics ON public.sam_registrations USING btree (primary_naics);
+CREATE INDEX IF NOT EXISTS idx_sam_naics ON public.sam_registrations USING btree (primary_naics)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_name_trgm ON public.sam_registrations USING gin (legal_business_name public.gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_sam_name_trgm ON public.sam_registrations USING gin (legal_business_name public.gin_trgm_ops)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_primary_naics ON public.sam_registrations USING btree (primary_naics);
+CREATE INDEX IF NOT EXISTS idx_sam_primary_naics ON public.sam_registrations USING btree (primary_naics)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_registrations_geom_point ON public.sam_registrations USING gist (geom_point) WHERE (geom_point IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_sam_registrations_geom_point ON public.sam_registrations USING gist (geom_point)
+  TABLESPACE ssd_1tb
+  WHERE (geom_point IS NOT NULL);
 
-CREATE INDEX IF NOT EXISTS idx_sam_state ON public.sam_registrations USING btree (physical_state);
+CREATE INDEX IF NOT EXISTS idx_sam_state ON public.sam_registrations USING btree (physical_state)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_sam_uei ON public.sam_registrations USING btree (uei);
+CREATE INDEX IF NOT EXISTS idx_sam_uei ON public.sam_registrations USING btree (uei)
+  TABLESPACE ssd_1tb;

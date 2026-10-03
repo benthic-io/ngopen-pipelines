@@ -7,26 +7,40 @@
 --
 -- Extracted from `pg_dump --section=post-data` on 2026-08-08.
 
-CREATE INDEX IF NOT EXISTS idx_mcr_duns ON public.mv_contractor_registry USING btree (duns);
+CREATE INDEX IF NOT EXISTS idx_mcr_duns ON public.mv_contractor_registry USING btree (duns)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mcr_expiration ON public.mv_contractor_registry USING btree (registration_expiration);
+CREATE INDEX IF NOT EXISTS idx_mcr_expiration ON public.mv_contractor_registry USING btree (registration_expiration)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mcr_geom ON public.mv_contractor_registry USING gist (geom_point) WHERE (geom_point IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_mcr_geom ON public.mv_contractor_registry USING gist (geom_point)
+  TABLESPACE ssd_1tb
+  WHERE (geom_point IS NOT NULL);
 
-CREATE INDEX IF NOT EXISTS idx_mcr_naics ON public.mv_contractor_registry USING btree (primary_naics);
+CREATE INDEX IF NOT EXISTS idx_mcr_naics ON public.mv_contractor_registry USING btree (primary_naics)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mcr_name_trgm ON public.mv_contractor_registry USING gin (legal_business_name public.gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_mcr_name_trgm ON public.mv_contractor_registry USING gin (legal_business_name public.gin_trgm_ops)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mcr_state ON public.mv_contractor_registry USING btree (physical_state);
+CREATE INDEX IF NOT EXISTS idx_mcr_state ON public.mv_contractor_registry USING btree (physical_state)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mcr_status ON public.mv_contractor_registry USING btree (registration_status);
+CREATE INDEX IF NOT EXISTS idx_mcr_status ON public.mv_contractor_registry USING btree (registration_status)
+  TABLESPACE ssd_1tb;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mcr_uei ON public.mv_contractor_registry USING btree (uei);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcr_uei ON public.mv_contractor_registry USING btree (uei)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_geom ON public.mv_contractor_registry USING gist (geom_point) WHERE (geom_point IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_mv_contractor_geom ON public.mv_contractor_registry USING gist (geom_point)
+  TABLESPACE ssd_1tb
+  WHERE (geom_point IS NOT NULL);
 
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_state ON public.mv_contractor_registry USING btree (physical_state);
+CREATE INDEX IF NOT EXISTS idx_mv_contractor_state ON public.mv_contractor_registry USING btree (physical_state)
+  TABLESPACE ssd_1tb;
 
-CREATE INDEX IF NOT EXISTS idx_mv_contractor_status ON public.mv_contractor_registry USING btree (registration_status);
+CREATE INDEX IF NOT EXISTS idx_mv_contractor_status ON public.mv_contractor_registry USING btree (registration_status)
+  TABLESPACE ssd_1tb;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_contractor_uei ON public.mv_contractor_registry USING btree (uei);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_contractor_uei ON public.mv_contractor_registry USING btree (uei)
+  TABLESPACE ssd_1tb;

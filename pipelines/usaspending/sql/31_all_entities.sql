@@ -139,14 +139,28 @@ SELECT
 FROM _staging_subaward_entities;
 
 -- Indexes
-CREATE UNIQUE INDEX idx_all_entities_entity_id ON public.all_entities(entity_id);
-CREATE INDEX idx_all_entities_uei ON public.all_entities(uei) WHERE uei IS NOT NULL;
-CREATE INDEX idx_all_entities_entity_type ON public.all_entities(entity_type);
-CREATE INDEX idx_all_entities_state ON public.all_entities(state) WHERE state IS NOT NULL;
-CREATE INDEX idx_all_entities_is_geocoded ON public.all_entities(is_geocoded) WHERE is_geocoded = true;
-CREATE INDEX idx_all_entities_geom_point ON public.all_entities USING GIST(geom_point) WHERE geom_point IS NOT NULL;
-CREATE INDEX idx_all_entities_geohash_6 ON public.all_entities(geohash_6) WHERE geohash_6 IS NOT NULL;
-CREATE INDEX idx_all_entities_total_obligation ON public.all_entities(total_obligation) WHERE total_obligation > 0;
+CREATE UNIQUE INDEX idx_all_entities_entity_id ON public.all_entities(entity_id)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_all_entities_uei ON public.all_entities(uei)
+  TABLESPACE ssd_1tb
+  WHERE uei IS NOT NULL;
+CREATE INDEX idx_all_entities_entity_type ON public.all_entities(entity_type)
+  TABLESPACE ssd_1tb;
+CREATE INDEX idx_all_entities_state ON public.all_entities(state)
+  TABLESPACE ssd_1tb
+  WHERE state IS NOT NULL;
+CREATE INDEX idx_all_entities_is_geocoded ON public.all_entities(is_geocoded)
+  TABLESPACE ssd_1tb
+  WHERE is_geocoded = true;
+CREATE INDEX idx_all_entities_geom_point ON public.all_entities USING GIST(geom_point)
+  TABLESPACE ssd_1tb
+  WHERE geom_point IS NOT NULL;
+CREATE INDEX idx_all_entities_geohash_6 ON public.all_entities(geohash_6)
+  TABLESPACE ssd_1tb
+  WHERE geohash_6 IS NOT NULL;
+CREATE INDEX idx_all_entities_total_obligation ON public.all_entities(total_obligation)
+  TABLESPACE ssd_1tb
+  WHERE total_obligation > 0;
 
 -- Staging cleanup: DELIBERATELY REMOVED.
 --

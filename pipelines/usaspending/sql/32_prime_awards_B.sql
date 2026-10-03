@@ -128,15 +128,25 @@ LEFT JOIN rpt.award_search as_
 LEFT JOIN public.all_entities ae
     ON COALESCE(as_.recipient_hash, da.recipient_hash) = ae.recipient_hash;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_prime_awards_award_id ON public.prime_awards(award_id);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_linked_entity ON public.prime_awards(linked_entity_id);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_fiscal_year ON public.prime_awards(fiscal_year);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_action_date ON public.prime_awards(action_date);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_uei ON public.prime_awards(recipient_uei);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_state ON public.prime_awards(recipient_state);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_pop_state ON public.prime_awards(pop_state);
-CREATE INDEX IF NOT EXISTS idx_prime_awards_total_obligation ON public.prime_awards(total_obligation) WHERE total_obligation > 0;
-CREATE INDEX IF NOT EXISTS idx_prime_awards_awarding_agency ON public.prime_awards(awarding_agency);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prime_awards_award_id ON public.prime_awards(award_id)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_linked_entity ON public.prime_awards(linked_entity_id)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_fiscal_year ON public.prime_awards(fiscal_year)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_action_date ON public.prime_awards(action_date)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_uei ON public.prime_awards(recipient_uei)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_recipient_state ON public.prime_awards(recipient_state)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_pop_state ON public.prime_awards(pop_state)
+  TABLESPACE ssd_1tb;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_total_obligation ON public.prime_awards(total_obligation)
+  TABLESPACE ssd_1tb
+  WHERE total_obligation > 0;
+CREATE INDEX IF NOT EXISTS idx_prime_awards_awarding_agency ON public.prime_awards(awarding_agency)
+  TABLESPACE ssd_1tb;
 
 -- Composite of the two columns the site's own front end always pairs with the
 -- sort. `awarding_agency_code` had no index at all, so a query filtering only on
